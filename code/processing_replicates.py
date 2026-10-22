@@ -35,7 +35,7 @@ from download_encode import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENCODE_ROOT = PROJECT_ROOT / "data" / "ENCODE"
 WIN_ROOT = ENCODE_ROOT / "win"
-GENOME_ROOT = Path(__file__).resolve().parents[3] / "Essentials" / "hg38"
+GENOME_ROOT = PROJECT_ROOT / "data" / "genomes" / "hg38"
 
 SHRINK_WINDOW_SIZE = 0.01
 SHRINK_STEP = 0.005

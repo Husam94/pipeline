@@ -138,15 +138,14 @@ The modeling and interpretation scripts accept the experiment JSON as an
 optional positional argument and default to `data/experiments.json`. Use
 `python code/<script>.py --help` for each script’s options.
 
-### Genome resource path note
+### Genome resources
 
-`prepare_genome.py` writes resources to `data/genomes/<genome-name>/`, which is
-where `processing_exp_data.py` reads them. However, `processing_initial.py` and
-`processing_replicates.py` currently expect the hg38 processing pickles under
-`../../Essentials/hg38` relative to the repository root. For those steps, make
-the required hg38 resources (including `hg38_id_sizes.p`,
-`hg38_basic_id_sizes.p`, and `hg38_basic_BLC_LR50.p`) available at that
-location, or update the scripts to use the generated genome directory.
+`prepare_genome.py` writes resources to `data/genomes/<genome-name>/`.
+`processing_initial.py`, `processing_replicates.py`, and
+`processing_exp_data.py` use `data/genomes/hg38/` for the hg38 resources, so
+prepare the genome with the label `hg38` before processing ENCODE files and
+experiments. The required processing files include `hg38_id_sizes.p`,
+`hg38_basic_id_sizes.p`, and `hg38_basic_BLC_LR50.p`.
 
 ## Repository layout
 

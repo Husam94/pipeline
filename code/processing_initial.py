@@ -17,8 +17,9 @@ from download_encode import FILE_ACCESSION_PATTERN, ensure_metadata_columns
 LOWEST_RESOLUTION = 10
 TARGET_RESOLUTION = 50
 WINDOW_SIZE = 200
-ENCODE_ROOT = Path(__file__).resolve().parents[1] / "data" / "ENCODE"
-GENOME_ROOT = Path(__file__).resolve().parents[3] / "Essentials" / "hg38"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ENCODE_ROOT = PROJECT_ROOT / "data" / "ENCODE"
+GENOME_ROOT = PROJECT_ROOT / "data" / "genomes" / "hg38"
 
 
 def parse_accessions(values: list[str], input_file: Path | None) -> list[str]:
