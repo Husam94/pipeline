@@ -1,0 +1,6 @@
+# Local datasets and generated experiment outputs
+/data/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
