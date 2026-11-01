@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optimize biological models using one experiment's packs and splits."""
+"""Search biological model configurations using one experiment's packs and splits."""
 
 from __future__ import annotations
 
@@ -18,16 +18,37 @@ import poseigen_seaside.basics as se
 import poseigen_seaside.metrics as mex
 import poseigen_compass as co
 import poseigen_trident.utils as tu
-import poseigen_trident.preass as preass
 import poseigen_trident.deepstarr as deepstarr
 import poseigen_trident.othermodels as othmods
 import poseigen_oyster.model as oyster_models
+from poseigen_mimic import (
+    Dual_Mimic,
+    Mimic,
+    Reset_Dual_Mimic,
+    Reset_Mimic,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EXPERIMENT_FILE = PROJECT_ROOT / "data" / "experiments.json"
 DEFAULT_EXPERIMENT_ROOT = PROJECT_ROOT / "data" / "experiments"
 EXPERIMENT_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*")
+SINGLE_INPUT_MODELS = (
+    "DeepSTARR",
+    "Mimic_Att",
+    "Mimic_Single",
+    "Mimic_Recurrent",
+    "Mimic_CPM",
+    "Oyster",
+)
+DUAL_INPUT_MODELS = (
+    "BiChrom",
+    "Dual_Mimic_Att",
+    "Dual_Mimic_Single",
+    "Dual_Mimic_Recurrent",
+    "Dual_Mimic_CPM",
+    "Dual_Oyster",
+)
 
 
 def read_experiment(path: Path) -> dict[str, Any]:
@@ -47,6 +68,35 @@ def read_experiment(path: Path) -> dict[str, Any]:
     return experiment
 
 
+def resolve_models_to_search(
+    experiment: dict[str, Any],
+    pack_count: int,
+) -> list[str]:
+    available_models = (
+        SINGLE_INPUT_MODELS if pack_count == 4 else DUAL_INPUT_MODELS
+    )
+    configured_models = experiment.get("models_to_search")
+    if configured_models is None:
+        return list(available_models)
+    if not isinstance(configured_models, list) or not configured_models:
+        raise ValueError("models_to_search must be a non-empty list of model names.")
+    if any(not isinstance(model, str) or not model for model in configured_models):
+        raise ValueError("models_to_search entries must be non-empty strings.")
+    if len(set(configured_models)) != len(configured_models):
+        raise ValueError("models_to_search cannot contain duplicate model names.")
+    unsupported_models = [
+        model for model in configured_models if model not in available_models
+    ]
+    if unsupported_models:
+        raise ValueError(
+            "Unsupported model name(s) for this experiment: "
+            + ", ".join(unsupported_models)
+            + ". Available models: "
+            + ", ".join(available_models)
+        )
+    return list(configured_models)
+
+
 def load_experiment_data(
     experiment_dir: Path,
 ) -> tuple[list[Any], Any, Any]:
@@ -60,7 +110,7 @@ def load_experiment_data(
         raise FileNotFoundError(
             "Missing experiment input data: "
             + ", ".join(str(path) for path in missing)
-            + ". Run processing_exp_data.py first."
+            + ". Run data_prep.py first."
         )
 
     tri_tpacks = se.PickleLoad(str(paths["packs"]))
@@ -81,27 +131,19 @@ def single_oyster_search_space(
         **opt_base_dict,
         "dim_i": [[input_shape], "cat"],
         "dim_f": [[(1, 1, 1)], "cat"],
-        "DS": [[False, True], "cat"],
-        "DS_wwp_func": [[nn.MaxPool2d, nn.AvgPool2d], "cat"],
-        "DS_act": [[False, True], "cat"],
+
         "kE_k": [[11, 13, 15], "cat"],
-        "kE_cf_m": [[50, 100, 150], "cat"],
-        "kE_cf_ns": [[1, 1.1, 1.2], "cat"],
-        "kE_ck_base": [[None, 5, 7, 9], "cat"],
+        "kE_cf_m": [[100, 150, 200, 250], "cat"],
+        'kE_cf_ns': [[1, 1.15, 1.3], 'cat'],
+        "kE_ck_base": [[None, 7, 9], "cat"],
         "kE_OneByOne": [[True, False], "cat"],
         "kE_ck_grouped": [[True, False], "cat"],
-        "P_ck": [[None, 10, 25, 50, 100], "cat"],
-        "P_center": [[True, False], "cat"],
-        "O_mods": [[0, 1, 2], "cat"],
-        "O_mods_ns": [[0.3, 0.5], "cat"],
-        "O_cf_pu_m": [[None, 1, 1.5, 2], "cat"],
-        "O_cf_ns": [[1, 1.1, 1.2], "cat"],
-        "O_ck_base": [[None, 5, 7, 9], "cat"],
-        "O_pool_k2s": [[0, 0.5], "cat"],
-        "O_pool_func": [[nn.MaxPool2d, nn.AvgPool2d], "cat"],
-        "O_actb4pool": [[True, False], "cat"],
+        'kE_chunked': [[4], 'cat'],
+
+        'P_ck': [[50, 100, 200], 'cat'],
+
         "O_dropout": [[0, 0.1, 0.2], "cat"],
-        "O_bias": [[False, True], "cat"],
+
         "activations": [[nn.ReLU(), nn.LeakyReLU()], "cat"],
         "activation_f": [[None, tu.AsinhAct(), tu.AsinhAct_L()], "cat"],
         "batchnorm": [[None, "before"], "cat"],
@@ -116,19 +158,7 @@ def dual_oyster_search_space(
     search_space = {
         **opt_base_dict,
         "dim_f": [[(1, 1, 1)], "cat"],
-        "P_center": [[True, False], "cat"],
-        "DS_wwp_func": [[nn.MaxPool2d], "cat"],
-        "DS_act": [[False], "cat"],
-        "O_mods": [[0, 1, 2], "cat"],
-        "O_mods_ns": [[0.3, 0.5], "cat"],
-        "O_cf_pu_m": [[None, 1, 1.5, 2], "cat"],
-        "O_cf_ns": [[1, 1.1, 1.2], "cat"],
-        "O_ck_base": [[None, 5, 7, 9], "cat"],
-        "O_pool_k2s": [[0, 0.5], "cat"],
-        "O_pool_func": [[nn.MaxPool2d, nn.AvgPool2d], "cat"],
-        "O_actb4pool": [[True, False], "cat"],
         "O_dropout": [[0, 0.1, 0.2], "cat"],
-        "O_bias": [[False, True], "cat"],
         "activations": [[nn.ReLU(), nn.LeakyReLU()], "cat"],
         "activation_f": [[None, tu.AsinhAct(), tu.AsinhAct_L()], "cat"],
         "batchnorm": [[None, "before"], "cat"],
@@ -147,6 +177,8 @@ def dual_oyster_search_space(
                 f"{prefix}kE_ck_base": [[None, 4, 5, 6, 7, 8], "cat"],
                 f"{prefix}kE_OneByOne": [[True, False], "cat"],
                 f"{prefix}kE_ck_grouped": [[True, False], "cat"],
+                f"{prefix}P_center": [[True, False], "cat"],
+                f"{prefix}kE_chunked": [[None, 4], "cat"],
                 f"{prefix}P_ck": [[None, 6, 20], "cat"],
             }
         )
@@ -197,9 +229,10 @@ def run_optimization(
     bin_sizes: Any,
     split_transaug: Any,
     budget: int,
+    models_to_run: list[str],
 ) -> None:
-    opt_dir = experiment_dir / "opt"
-    optfolder = se.NewFolder(str(opt_dir))
+    search_dir = experiment_dir / "search"
+    searchfolder = se.NewFolder(str(search_dir))
     if len(tri_tpacks) == 4:
         d_x, d_y_ms, d_s, d_b = tri_tpacks
     else:
@@ -244,7 +277,7 @@ def run_optimization(
         "savemodels": True,
         "returnmodel": True,
     }
-    se.PickleDump(fit_args, optfolder + "fit_args")
+    se.PickleDump(fit_args, searchfolder + "fit_args")
 
     opt_base_dict = {
         "batchsize": [[128, 256, 512], "cat"],
@@ -253,7 +286,7 @@ def run_optimization(
             "cat",
         ],
     }
-    ultra_dict_general = {
+    mimic_dict_general = {
         **opt_base_dict,
         "kE_OneByOne": [[True, False], "cat"],
         "PR_pool_func": [[nn.MaxPool2d, nn.AvgPool2d], "cat"],
@@ -281,8 +314,8 @@ def run_optimization(
     single_dict = {"PR_layer": [[nn.Conv2d], "cat"]}
 
     if len(tri_tpacks) == 4:
-        ultra_dict_shared = {
-            **ultra_dict_general,
+        mimic_dict_shared = {
+            **mimic_dict_general,
             "dim_i": [[d_x.shape[1:]], "cat"],
             "dim_f": [[(1, 1, 1)], "cat"],
             "kE_k": [[11, 13, 15], "cat"],
@@ -297,18 +330,10 @@ def run_optimization(
             "PR_pk_base": [[0, 2, 4], "cat"],
             "PR_pk_s": [[2, 3, 4], "cat"],
         }
-        model_names = [
-            "DeepSTARR",
-            "Ultra_Att",
-            "Ultra_Single",
-            "Ultra_Recurrent",
-            "Ultra_CPM",
-            "Oyster",
-        ]
-        top_model_names = {"DeepSTARR", "Ultra_CPM", "Oyster"}
+        top_model_names = {"DeepSTARR", "Mimic_CPM", "Oyster"}
     else:
-        ultra_dict_shared = {
-            **ultra_dict_general,
+        mimic_dict_shared = {
+            **mimic_dict_general,
             "late_comb": [[False, True], "cat"],
             "A_dim_i": [[d_x1.shape[1:]], "cat"],
             "B_dim_i": [[d_x2.shape[1:]], "cat"],
@@ -334,17 +359,9 @@ def run_optimization(
             "B_PR_pk_base": [[0, 2], "cat"],
             "B_PR_pk_s": [[2, 3, 4], "cat"],
         }
-        model_names = [
-            "BiChrom",
-            "Dual_Ultra_Att",
-            "Dual_Ultra_Single",
-            "Dual_Ultra_Recurrent",
-            "Dual_Ultra_CPM",
-            "Dual_Oyster",
-        ]
-        top_model_names = {"BiChrom", "Dual_Ultra_CPM", "Dual_Oyster"}
+        top_model_names = {"BiChrom", "Dual_Mimic_CPM", "Dual_Oyster"}
 
-    for model_name in model_names:
+    for model_name in models_to_run:
         if len(tri_tpacks) == 4:
             if model_name == "DeepSTARR":
                 modo = deepstarr.DeepSTARR
@@ -353,21 +370,21 @@ def run_optimization(
                 modo = oyster_models.Oyster
                 init_mode = [oyster_models.Reset_Oyster, {}]
             else:
-                modo = preass.Ultra
-                init_mode = [preass.Reset_Ultra, {}]
+                modo = Mimic
+                init_mode = [Reset_Mimic, {}]
         else:
             if model_name == "BiChrom":
                 modo = othmods.BiChrom
                 init_mode = [othmods.Reset_BiChrom, {}]
             elif model_name == "Dual_Oyster":
-                modo = oyster_models.DualOyster
-                init_mode = [oyster_models.Reset_DualOyster, {}]
+                modo = oyster_models.Dual_Oyster
+                init_mode = [oyster_models.Reset_Dual_Oyster, {}]
             else:
-                modo = preass.Dual_Ultra
-                init_mode = [preass.Reset_Dual_Ultra, {}]
+                modo = Dual_Mimic
+                init_mode = [Reset_Dual_Mimic, {}]
 
-        print(f"Starting optimization for {model_name}.", flush=True)
-        model_folder = se.NewFolder(optfolder + model_name)
+        print(f"Starting model search for {model_name}.", flush=True)
+        model_folder = se.NewFolder(searchfolder + model_name)
         model_args = {"folder": model_folder, "iter": 0}
         model_args["pn"] = se.NewFolder(model_folder + "RO_0")
         se.PickleDump(model_args, model_folder + "RO_args")
@@ -383,13 +400,13 @@ def run_optimization(
                 tuple(d_x2.shape[1:]),
             )
         elif "CPM" in model_name:
-            opt_dict = {**ultra_dict_shared, **cpm_dict}
+            opt_dict = {**mimic_dict_shared, **cpm_dict}
         elif "Att" in model_name:
-            opt_dict = {**ultra_dict_shared, **position_dict, **attention_dict}
+            opt_dict = {**mimic_dict_shared, **position_dict, **attention_dict}
         elif "Single" in model_name:
-            opt_dict = {**ultra_dict_shared, **position_dict, **single_dict}
+            opt_dict = {**mimic_dict_shared, **position_dict, **single_dict}
         elif "Recurrent" in model_name:
-            opt_dict = {**ultra_dict_shared, **position_dict, **recurrent_dict}
+            opt_dict = {**mimic_dict_shared, **position_dict, **recurrent_dict}
         elif model_name == "DeepSTARR":
             opt_dict = {
                 **opt_base_dict,
@@ -448,7 +465,7 @@ def run_optimization(
         co.RandomOpt(**random_opt_args)
 
         if model_name not in top_model_names:
-            print(f"Completed optimization for {model_name}.", flush=True)
+            print(f"Completed model search for {model_name}.", flush=True)
             continue
 
         repeated_args = {
@@ -486,8 +503,8 @@ def run_optimization(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Optimize the model families from bio_opt_all.py using the packs "
-            "and splits for one experiment."
+            "Search the selected model families using the packs and splits "
+            "for one experiment."
         )
     )
     parser.add_argument(
@@ -521,13 +538,15 @@ def main(argv: list[str] | None = None) -> int:
         if not experiment_dir.is_dir():
             raise FileNotFoundError(
                 f"Experiment output directory not found: {experiment_dir}. "
-                "Run processing_exp_data.py first or pass --experiment-root."
+                "Run data_prep.py first or pass --experiment-root."
             )
         tri_tpacks, bin_sizes, split_transaug = load_experiment_data(experiment_dir)
-        (experiment_dir / "opt").mkdir(parents=True, exist_ok=True)
+        models_to_run = resolve_models_to_search(experiment, len(tri_tpacks))
+        search_dir = experiment_dir / "search"
+        search_dir.mkdir(parents=True, exist_ok=True)
         print(
-            f"Optimizing experiment {experiment['experiment_name']!r}; "
-            f"results will be written to {experiment_dir / 'opt'}.",
+            f"Searching models for experiment {experiment['experiment_name']!r}: "
+            f"{', '.join(models_to_run)}. Results will be written to {search_dir}.",
             flush=True,
         )
         run_optimization(
@@ -536,13 +555,14 @@ def main(argv: list[str] | None = None) -> int:
             bin_sizes,
             split_transaug,
             args.budget,
+            models_to_run,
         )
         print(
-            f"Completed model optimization for {experiment['experiment_name']!r}.",
+            f"Completed model search for {experiment['experiment_name']!r}.",
             flush=True,
         )
     except (OSError, ValueError, RuntimeError, KeyError) as error:
-        print(f"model_opt: error: {error}", file=sys.stderr)
+        print(f"model_search: error: {error}", file=sys.stderr)
         return 1
     return 0
 

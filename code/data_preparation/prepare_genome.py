@@ -16,6 +16,7 @@ import urllib.request
 from pathlib import Path
 from typing import BinaryIO
 
+hg38_URL = "https://www.encodeproject.org/files/GRCh38_no_alt_analysis_set_GCA_000001405.15/@@download/GRCh38_no_alt_analysis_set_GCA_000001405.15.fasta.gz"
 
 BLACKLIST_LIST_URL = (
     "https://api.github.com/repos/Boyle-Lab/Blacklist/contents/lists?ref=master"
@@ -186,16 +187,32 @@ def process_blacklist(
 
     markers = chis.Bed2Markers(str(bed_path))
     basic_ids = identifiers[:25]
-    basic_blacklist_current = chis.Markers2BinCurrent(
-        markers,
-        sizes,
-        identifiers,
-        select_BS_ids=basic_ids,
-        Msizes=markers.iloc[:, 3],
-        reso=1,
-        inverse=True,
-        dtype=np.int8,
-    )
+    sizes_by_id = dict(zip(identifiers, sizes, strict=True))
+    markers_by_chromosome = {
+        chromosome: chromosome_markers[["loc", "size"]].itertuples(
+            index=False, name=None
+        )
+        for chromosome, chromosome_markers in markers.groupby("subseq", sort=False)
+    }
+    basic_blacklist_current = []
+    for chromosome in basic_ids:
+        if chromosome not in sizes_by_id:
+            raise ValueError(f"Unknown chromosome in basic genome IDs: {chromosome}")
+        current = np.ones((sizes_by_id[chromosome], 1), dtype=np.int8)
+        for location, marker_size in markers_by_chromosome.get(chromosome, ()):
+            marker_size = int(marker_size)
+            if marker_size < 0:
+                raise ValueError(
+                    f"Blacklist interval on {chromosome} has a negative size."
+                )
+            start = int(location) - marker_size // 2
+            end = start + marker_size
+            start = max(0, start)
+            end = min(len(current), end)
+            if start < end:
+                current[start:end, 0] = 0
+        basic_blacklist_current.append(current)
+
     _dump_pickle(
         basic_blacklist_current,
         output_dir / f"{genome_name}_basic_BLC.p",
@@ -231,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.genome_name):
         parser.error("genome_name must start with a letter or digit and contain only letters, digits, '.', '_' or '-'")
 
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     output_dir = project_root / "data" / "genomes" / args.genome_name
     if not args.rewrite and output_dir.is_dir() and any(output_dir.iterdir()):
         print("Already present, use --rewrite to make new")

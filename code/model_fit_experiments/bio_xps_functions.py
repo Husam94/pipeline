@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib import colors as mpl_colors
 
 import os, glob, shutil 
 from pathlib import Path
@@ -597,6 +599,104 @@ def build_full_stats_table_styled(ensemb_vsref_stats, xpx_dict, metric='mses',
     return styled, df
 
 
+def save_styled_results_table(
+    styled_scores,
+    results_scores,
+    significance_scores,
+    output_base,
+    metric,
+    reference,
+    table_output_base=None,
+):
+    output_base = Path(output_base)
+    output_base.parent.mkdir(parents=True, exist_ok=True)
+    table_output_base = Path(table_output_base or output_base)
+    table_output_base.parent.mkdir(parents=True, exist_ok=True)
+
+    metric_labels = {
+        'mses': 'MSE',
+        'rmses': 'RMSE',
+        'corrs': 'correlation',
+        'epochs': 'training epochs',
+    }
+    metric_label = metric_labels.get(metric, metric)
+    caption = f"Median bootstrap {metric_label} change vs {reference} (%)"
+    styled_scores.set_caption(caption)
+    styled_scores.to_html(table_output_base.with_suffix('.html'))
+    styled_scores.to_excel(
+        table_output_base.with_name(table_output_base.name + '_styled.xlsx'),
+        sheet_name='Results',
+    )
+
+    values = results_scores.to_numpy(dtype=float)
+    finite_values = values[np.isfinite(values)]
+    if len(finite_values):
+        vmin = float(np.min(finite_values))
+        vmax = float(np.max(finite_values))
+    else:
+        vmin, vmax = 0.0, 1.0
+    if vmin == vmax:
+        vmin -= 0.5
+        vmax += 0.5
+
+    color_map = plt.get_cmap('Greys')
+    normalization = mpl_colors.Normalize(vmin=vmin, vmax=vmax)
+    cell_colours = [
+        [
+            color_map(normalization(value)) if np.isfinite(value) else 'white'
+            for value in row
+        ]
+        for row in values
+    ]
+    figure_width = max(8.0, 2.0 * (len(results_scores.columns) + 1))
+    figure_height = max(3.0, 0.55 * (len(results_scores.index) + 1) + 1.2)
+    figure, axis = plt.subplots(figsize=(figure_width, figure_height))
+    axis.axis('off')
+    table = axis.table(
+        cellText=[
+            [f'{value:.2f}' if np.isfinite(value) else '' for value in row]
+            for row in values
+        ],
+        rowLabels=[str(label) for label in results_scores.index],
+        colLabels=[str(label) for label in results_scores.columns],
+        cellColours=cell_colours,
+        cellLoc='center',
+        loc='center',
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    table.auto_set_column_width(col=list(range(-1, len(results_scores.columns))))
+    for (row, column), cell in table.get_celld().items():
+        cell.set_edgecolor('#b7b7b7')
+        if row == 0:
+            cell.set_facecolor('#e6e6e6')
+            cell.set_text_props(fontweight='bold')
+        elif column == -1:
+            cell.set_facecolor('#f2f2f2')
+            cell.set_text_props(fontweight='bold')
+        elif 0 <= row - 1 < len(significance_scores.index):
+            cell.set_text_props(
+                fontweight=(
+                    'bold'
+                    if significance_scores.iloc[row - 1, column]
+                    else 'normal'
+                )
+            )
+    table.scale(1.0, 1.35)
+    axis.set_title(
+        f'{caption}\n'
+        'Bold: 5th–95th bootstrap interval excludes zero',
+        fontsize=11,
+        pad=18,
+    )
+    figure.savefig(
+        output_base.with_suffix('.png'),
+        dpi=200,
+        bbox_inches='tight',
+    )
+    plt.close(figure)
+
+
 
 
 
@@ -719,7 +819,8 @@ def compute_pairwise_comparison_stats(ensemb_dict, cof_name1, comx1, cof_name2, 
 
 def ResultsBasic(xpx_dict, tri_tpacks, bin_sizes, split, 
                  metric = 'mses', 
-                 undersamp_props = None, ref_idx = 0, rewrite = False):
+                 undersamp_props = None, ref_idx = 0, rewrite = False,
+                 styled_output_base = None, table_output_base = None):
     
     ref_comx = xpx_dict['combs'][ref_idx][1][0]
 
@@ -756,6 +857,17 @@ def ResultsBasic(xpx_dict, tri_tpacks, bin_sizes, split,
                                                                         metric=metric, use_median=True)
     
     df_stats = build_full_stats_table(ensemb_vsref_stats, xpx_dict, metric=metric)
+    if styled_output_base is not None:
+        reference = xpx_dict['combs'][ref_idx][1][0]
+        save_styled_results_table(
+            styled_scores,
+            results_scores,
+            sig_scores,
+            styled_output_base,
+            metric,
+            reference,
+            table_output_base,
+        )
 
     return styled_scores, results_scores, df_stats
 

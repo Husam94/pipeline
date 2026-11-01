@@ -6,146 +6,232 @@ their predictions.
 
 Run commands from the repository root with the Python environment that provides
 the project’s `poseigen_*` packages and scientific Python dependencies.
-`predictd.py` also requires MACS3 on `PATH` when calculating fragment lengths
-directly.
+`data_prep.py` uses MACS3 on `PATH` only when single-ended BAMs need fragment
+length predictions and no precomputed values are supplied.
 
 ## Workflow
 
-The scripts below follow the analysis lifecycle. `new_experiment.py` validates
-signal IDs against `data/ENCODE/meta_info.txt`; on a fresh checkout, first run
-`download_encode.py` for the ENCODE accessions you need (or otherwise provide a
-metadata file) before defining the experiment.
+Start with one JSON experiment definition containing the raw ENCODE accessions.
+`data_prep.py` retrieves metadata for listed accessions, validates the target/
+control relationships, and writes the generated signal IDs back to the file
+before building the experiment dataset.
 
-1. **[`code/new_experiment.py`](code/new_experiment.py) — define an experiment.**
-   Creates one JSON experiment object, by default at `data/experiments.json`.
-   It records the experiment name, genome label, optional input signals, output
-   signal, and processing parameters. Signal IDs must be file names, replicate
-   IDs, or pair IDs present in `meta_info.txt`. Each JSON file describes one
-   experiment; use `--output-file` for another file rather than trying to append
-   a second experiment to the default file.
+1. **Create the raw-accession experiment JSON.** Each file describes one
+    experiment. `input_accessions` and `output_accessions` are lists of target
+    ENCODE file accessions; `control_accessions` explicitly lists the control
+    files for those target datasets. Every target dataset’s controls must be
+    listed, and each target/control dataset needs at least two replicate files.
+    The output accessions must resolve to one target/control pair. The driver
+    does not download unlisted controls. When a non-control ENCODE dataset has
+    no target, its assay name is used as the target label; control datasets
+    remain unlabelled.
 
-   Example format:
+    Example format:
 
-   ```json
-   {
-     "experiment_name": "experiment-name",
-     "genome": "hg38",
-     "input_signals": [],
-     "output_signal": "ENCFF000ABC",
-     "output_size": 100,
+    ```json
+    {
+      "experiment_name": "EnhAct",
+      "genome": "hg38",
+      "input_accessions": [],
+      "output_accessions": ["ENCFF000ABC", "ENCFF000ABD"],
+      "control_accessions": ["ENCFF000XYZ", "ENCFF000XYA"],
+      "output_size": 50,
      "seq_size": 1000,
      "input_size": 200,
-     "translate_bp": 0,
-     "unique_sites": 10000
-   }
-   ```
+      "translate_bp": 250,
+      "num_trans_wins": 5,
+      "unique_sites": 30000,
+      "target_percentile": 1,
+      "control_percentile": 5
+    }
+    ```
 
-   Replace the example output ID with an ID from the metadata file. Input
-   signals may be an empty list. The size and `unique_sites` parameters must be
-   positive integers; `translate_bp` may be zero. Parameters can also be
-   supplied or overridden when running `processing_exp_data.py`.
+    `input_accessions` may be empty. After replicate processing,
+    `data_prep.py` retains the raw accession lists and fills `input_signals`
+    with generated pair IDs and `output_signal` with the generated output pair
+    ID. `num_trans_wins` is optional and defaults to 3; if supplied, it must be
+    positive. Sizes and `unique_sites` must be positive, while `translate_bp`
+    may be zero. The optional `target_percentile` and `control_percentile`
+    settings control the lower signal filters and default to 1 and 5,
+    respectively; each must be between 0 and 100.
 
-2. **[`code/download_encode.py`](code/download_encode.py) — acquire ENCODE files
-   and metadata.** Downloads the requested ENCODE files into
-   `data/ENCODE/raw/` and maintains the tab-delimited
-   `data/ENCODE/meta_info.txt` catalog used by later steps. For the accession
-   list in this checkout, run:
+2. **[`code/data_prep.py`](code/data_prep.py) — prepare all data for the experiment.**
+     Reads the raw accession lists, downloads only listed files that are missing,
+     retrieves their ENCODE metadata, verifies control relationships, prepares
+     missing genome resources, predicts fragment lengths only for single-ended
+     BAMs that need them, runs per-file current and replicate processing, then
+     writes generated signal IDs to the JSON and runs site selection, pack
+     building, and split generation as separate stages.
+     Per-file processing skips output files that are already present.
 
-   ```bash
-   python code/download_encode.py --input-file yy1_download.txt
-   ```
+    Replicate processing saves per-pair VST diagnostic figures under
+    `data/ENCODE/vst/figs/`: the raw-mode-to-VST curve and the local scale
+    implied by that curve, plus a before/after spread comparison from observed
+    target/control replicate ratios. The spread comparison uses a Harpoon-
+    balanced sample of eligible genomic sites and caches its sampled statistics.
+    These figures are refreshed when a cached transform is reused, without
+    refitting it.
 
-3. **[`code/prepare_genome.py`](code/prepare_genome.py) — prepare genome
-   resources.** Downloads a FASTA (plain or gzip), stores genome sequence and
-   chromosome-size pickles, and downloads/processes a matching Boyle-Lab
-   blacklist when one is available. Outputs go to
-   `data/genomes/<genome-name>/`.
+    Target-replicate concordance is reported under
+    `data/ENCODE/replicate_qc/`: pairwise log1p signal plots and a JSON summary
+    of correlations and zero-versus-positive disagreement. It uses a fixed
+    sample of unblacklisted bins after scaling each target replicate to the
+    mean total reads across its paired control replicates. The selected
+    experiment's pair-specific plots and JSON summaries are also copied into
+    its `output/figures/data_preparation/replicate_qc/` and
+    `output/tables/data_preparation/replicate_qc/` folders.
 
-   ```bash
-   python code/prepare_genome.py <FASTA_URL> hg38
-   ```
+    For hg38, the script uses the standard ENCODE GRCh38 FASTA URL automatically
+    when resources are missing. For another genome or an alternate hg38 assembly,
+    provide a FASTA URL with `--genome-url`:
 
-4. **[`code/predictd.py`](code/predictd.py) — get fragment lengths.** For
-   single-ended ENCODE files, runs MACS3 `predictd` and records predicted
-   fragment lengths in `meta_info.txt`. It can instead import precomputed
-   accession/length pairs; `yy1_predictd.txt` is an example:
+    ```bash
+    python code/data_prep.py data/experiments.json
+    ```
 
-   ```bash
-   python code/predictd.py --precomputed-file yy1_predictd.txt
-   ```
+    `--genome-url` is also unnecessary when the experiment’s genome resources
+    are already present. To use precomputed fragment lengths instead of MACS3,
+    pass `--predictd-file yy1_predictd.txt`. The experiment JSON’s genome label
+    must match the files prepared under `data/genomes/<genome-name>/`.
 
-5. **[`code/processing_initial.py`](code/processing_initial.py) — make
-   per-file signal currents.** Converts BAM or bigWig inputs to full,
-   low-resolution, autosomal, and windowed, blacklist-filtered currents under
-   `data/ENCODE/{full,lowres,autos,win}/`. Single-ended BAMs need a `predictd`
-   value in the metadata.
+    Flag generation and site selection are isolated in
+    [`code/data_preparation/site_selection.py`](code/data_preparation/site_selection.py)
+    and run after replicate processing, before pack generation. The script adds
+    a pseudocount, flags 2,000-bp windows at 50-bp resolution, filters candidate
+    sites using control thresholds and the genome blacklist, then applies the
+    experiment’s VST and Harpoon sampling across 1,000 value bins. It saves the
+    flag intermediates, selected sites, thresholds, and diagnostic figures
+    under the experiment’s `flag/` directory. Its site-selection figure and QC
+    JSON are written to `output/figures/data_preparation/site_selection/` and
+    `output/tables/data_preparation/site_selection/`. Run it directly with an
+    experiment JSON when only site selection needs to be regenerated. The QC
+    report describes retained candidate counts after
+    each complete-window blacklist, target, and control filter.
 
-6. **[`code/processing_replicates.py`](code/processing_replicates.py) — merge
-   replicates and build paired signal statistics.** Uses the ENCODE metadata to
-   group replicate files and target/control pairs. Writes merged currents,
-   shrunk standard deviations, beta-prime summaries, and variance-stabilizing
-   transforms under `data/ENCODE/{merged,shrunk_std,betaprime,vst}/`.
+    [`code/data_preparation/pack_builder.py`](code/data_preparation/pack_builder.py)
+    consumes those selected sites and creates the sequence, signal, and
+    translation-augmented packs. It does not rerun site selection or generate
+    splits. `data_prep.py` runs site selection, pack building, and split
+    generation as separate stages; when running stages manually, run
+    `site_selection.py`, then `pack_builder.py`, then `data_split.py`.
+    Pack-distribution figures are written to
+    `output/figures/data_preparation/pack_builder/`.
 
-7. **[`code/processing_exp_data.py`](code/processing_exp_data.py) — build the
-   experiment dataset.** Resolves the experiment’s signal IDs, selects and
-   filters sites, creates DNA/output/input packs, and generates train/stop/eval/
-   test splits. Results are written to
-   `data/experiments/<experiment-name>/`, primarily in `flag/`, `packs/`, and
-   `split/`. For example:
+    The lower signal bounds are configurable in the experiment JSON with
+    `control_percentile` (default 5) and `target_percentile` (default 1).
+    Both are applied to positive finite values; the upper bounds remain the
+    maximum positive value.
 
-   ```bash
-   python code/processing_exp_data.py data/experiments.json
-   ```
+    The final split stage is isolated in
+    [`code/data_preparation/data_split.py`](code/data_preparation/data_split.py).
+    It assigns overlap groups to selected sequence windows by chromosome
+    before generating the grouped splits, keeping overlapping windows together.
+    It saves column-wise and row-wise normalized bin-proportion heatmaps and
+    the output-value distribution under
+    `output/figures/data_preparation/split/`. `data_prep.py` runs it
+    automatically after pack generation. Existing `split.p` partitions are
+    reused by default; their figures are refreshed without rerunning the split
+    search. To explicitly generate new splits, pass `--redo-splits`:
 
-8. **[`code/model_opt.py`](code/model_opt.py) — optimize model configurations.**
-   Searches the applicable model families using the experiment packs and splits;
-   stores optimization results and selected configurations under the
-   experiment’s `opt/` directory.
+    ```bash
+    python code/data_preparation/data_split.py data/experiments.json --redo-splits
+    # Or run the full preparation driver:
+    python code/data_prep.py data/experiments.json --redo-splits
+    ```
 
-9. **[`code/model_ultra_comps.py`](code/model_ultra_comps.py) — compare
-   optimization results.** Bootstraps and summarizes candidate ranks and
-   parameter preferences from the optimization output. Writes comparison CSVs
-   under `opt/tables/`. Run after `model_opt.py`.
+    The standalone script accepts `--output-root`, `--split-candidates`,
+    `--split-cycles`, and `--seed`. `data_prep.py` also accepts the split search
+    options; candidate, cycle, and seed options apply only when
+    `--redo-splits` is set.
 
-10. **[`code/model_fit_exp.py`](code/model_fit_exp.py) — run model-fitting
+3. **[`code/model_search.py`](code/model_search.py) — search model configurations.**
+    Searches the applicable model families using the experiment packs and splits;
+    stores results and selected configurations under the experiment’s `search/`
+    directory. Set `models_to_search` in the experiment JSON to a non-empty list
+    of model names to run only those models; omit it to search all applicable
+    models. For example, the EnhAct experiment searches only `Oyster`.
+
+    Single-input model names are `DeepSTARR`, `Mimic_Att`, `Mimic_Single`,
+    `Mimic_Recurrent`, `Mimic_CPM`, and `Oyster`. Dual-input names use the
+    `Dual_` variants, with `BiChrom` in place of `DeepSTARR`.
+
+4. **[`code/model_mimic_comps.py`](code/model_mimic_comps.py) — compare
+    optimization results.** Bootstraps and summarizes candidate ranks and
+    parameter preferences from the optimization output. Writes comparison CSVs
+    under `output/tables/model_search/`. Run after searching the Mimic model
+    families.
+
+5. **[`code/model_fit_exp.py`](code/model_fit_exp.py) — run model-fitting
     experiments.** Uses the selected configurations to run the experiment
     fitting/replicate workflows (including the `xp2`, `xp3`, and `xp3B` runs).
     It requires a target key via `--targx`; outputs are organized under
-    `data_ml/`, `opt/`, and `xps/` within the experiment directory.
+    `data_ml/`, `search/`, and `xps/` within the experiment directory. It uses
+    the selected top-refined models from `models_to_search`. Each XP summary
+    also saves significance-highlighted figures under
+    `output/figures/model_fitting/` and HTML/XLSX tables under
+    `output/tables/model_fitting/`; bold cells indicate significant differences
+    from the reference.
 
     ```bash
     python code/model_fit_exp.py data/experiments.json --targx K562
     ```
 
-11. **[`code/interp_ensemble.py`](code/interp_ensemble.py) — build an
-    interpretation ensemble.** Selects and weights fitted model repeats using
-    bootstrap scores, then saves an ensemble manifest and weights alongside
-    the selected fit results. It requires completed optimization and fitting
-    outputs.
+6. **[`code/oyster_analysis/model_selection.py`](code/oyster_analysis/model_selection.py)
+    — select the fit recipe for interpretation.** Compares the existing
+    bootstrap RMSE distributions for `xp2`, `xp3`, and `xp3B` against the
+    `MSE-R` default. It keeps `MSE-R` unless an alternative's 5th–95th
+    percentile relative-RMSE interval is entirely below zero; if several
+    qualify, it chooses the one with the lowest median RMSE. The per-experiment
+    selection is saved to `output/tables/model_selection.json`, and the
+    repository-root `model_selection_tracker.csv` tracks the latest selection
+    for each experiment.
 
-12. **[`code/interp_dna.py`](code/interp_dna.py) — interpret DNA motifs.**
-    Scores a MEME-format motif database against the DNA branch of the weighted
-    Oyster ensemble and writes contribution tables and figures under the
-    ensemble’s `dna/` directory. Supply the motif database with `--motif-file`.
+    ```bash
+    python code/oyster_analysis/model_selection.py data/experiments.json
+    ```
 
-13. **[`code/interp_signals.py`](code/interp_signals.py) — interpret input
-    signals (when applicable).** For experiments with input signals, analyzes
-    the Dual_Oyster model’s DNA and signal contributions, including signal
-    k-mers and clusters. It writes results under the ensemble’s `signals/`
-    directory. This step does not apply to experiments with no input signals.
+    This uses the existing repeat bootstrap and the evaluation split; it does
+    not bootstrap sites. Complete model fitting first.
+
+7. **[`code/oyster_analysis/ensemble_analysis.py`](code/oyster_analysis/ensemble_analysis.py)
+    — build an interpretation ensemble.** Uses the selected fit recipe unless
+    `--xp-run` and `--loss` explicitly override it, weights fitted repeats, and
+    saves the final weighted model checkpoints and their manifest under
+    `output/oyster_models/<Oyster model identifier>/`. The manifest records
+    selected repeat weights and relative source-fit metadata, and
+    `model_config.json` preserves the selected model configuration. The
+    readable weight table is saved under `output/tables/oyster_models/`.
+
+8. **[`code/oyster_analysis/dna_analysis.py`](code/oyster_analysis/dna_analysis.py)
+    — interpret DNA motifs.** Scores a MEME-format motif database against the
+    DNA branch of the weighted Oyster ensemble and writes contribution tables
+    and figures under `output/tables/oyster_models/` and
+    `output/figures/oyster_models/`. Reusable analysis caches stay alongside
+    the model metadata. Supply the motif database with `--motif-file`.
+
+9. **[`code/oyster_analysis/signals_analysis.py`](code/oyster_analysis/signals_analysis.py)
+    — interpret input signals (when applicable).** For experiments with input
+    signals, analyzes the Dual_Oyster model’s DNA and signal contributions,
+    including signal k-mers and clusters. It writes figures and tables under
+    `output/figures/oyster_models/` and `output/tables/oyster_models/`, with
+    reusable analysis caches alongside the model metadata. This step does not
+    apply to experiments with no input signals.
 
 The modeling and interpretation scripts accept the experiment JSON as an
 optional positional argument and default to `data/experiments.json`. Use
-`python code/<script>.py --help` for each script’s options.
+`python code/data_prep.py --help` or
+`python code/oyster_analysis/<script>.py --help` for interpretation options.
+The individual `code/data_preparation/` scripts remain available for
+standalone use.
 
 ### Genome resources
 
 `prepare_genome.py` writes resources to `data/genomes/<genome-name>/`.
-`processing_initial.py`, `processing_replicates.py`, and
-`processing_exp_data.py` use `data/genomes/hg38/` for the hg38 resources, so
-prepare the genome with the label `hg38` before processing ENCODE files and
-experiments. The required processing files include `hg38_id_sizes.p`,
-`hg38_basic_id_sizes.p`, and `hg38_basic_BLC_LR50.p`.
+`generate_encode_currents.py`, `merge_replicates.py`, `site_selection.py`, and
+`pack_builder.py` use the experiment’s genome label. The required files
+include `<genome-name>_id_sizes.p`, `<genome-name>_basic.p`,
+`<genome-name>_basic_id_sizes.p`, and
+`<genome-name>_basic_BLC_LR50.p`.
 
 ## Repository layout
 
@@ -157,6 +243,7 @@ experiments. The required processing files include `hg38_id_sizes.p`,
 ├── yy1_predictd.txt              # ENCODE accession / fragment-length pairs
 ├── code/
 │   ├── *.py                      # Download, processing, modeling, interpretation
+│   ├── data_preparation/         # Data acquisition and preparation scripts
 │   └── model_fit_experiments/    # Fitting experiment runners and shared helpers
 └── data/                         # Local inputs, caches, and generated outputs
     ├── ENCODE/
@@ -168,12 +255,18 @@ experiments. The required processing files include `hg38_id_sizes.p`,
     ├── experiments.json
     └── experiments/<experiment-name>/
         ├── flag/ packs/ split/
-        ├── opt/
+        ├── search/
         ├── data_ml/
-        └── xps/
+        ├── xps/
+        └── output/
+            ├── experiment.json
+            ├── figures/
+            ├── tables/
+            └── oyster_models/
 ```
 
-The entire `/data/` directory is ignored by Git because it contains downloaded
-datasets, generated binary intermediates, models, and local experiment files.
-The default `data/experiments.json` is therefore local as well; keep experiment
-definitions elsewhere if they need to be version-controlled or shared.
+Downloaded datasets and generated intermediates are ignored by Git.
+Experiment `output/` folders are explicitly unignored so their figures, tables,
+model checkpoints, and metadata can be committed and shared. The default
+`data/experiments.json` is local as well; keep experiment definitions elsewhere
+if they need to be version-controlled or shared.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare Ultra model searches for one processed experiment."""
+"""Compare Mimic model searches for one processed experiment."""
 
 from __future__ import annotations
 
@@ -167,21 +167,21 @@ def combine_RO_outs(
 
 
 def load_model_outputs(
-    opt_dir: Path, model_name: str
+    search_dir: Path, model_name: str
 ) -> tuple[dict[str, Any], dict[Any, Any], dict[Any, Any]]:
-    model_dir = opt_dir / model_name
+    model_dir = search_dir / model_name
     args_path = model_dir / "RO_args.p"
     if not args_path.is_file():
         raise FileNotFoundError(
             f"Missing optimization arguments for {model_name}: {args_path}. "
-            "Run model_opt.py first."
+            "Run model_search.py first."
         )
     model_args = se.PickleLoad(str(args_path))
     result_path = Path(model_args["pn"]) / "Out.p"
     if not result_path.is_file():
         raise FileNotFoundError(
             f"Missing optimization results for {model_name}: {result_path}. "
-            "Run model_opt.py first."
+            "Run model_search.py first."
         )
     opt_dict_path = Path(model_args["pn"]) / "opt_dict.p"
     if not opt_dict_path.is_file():
@@ -200,20 +200,20 @@ def build_comparisons(
     top: int,
     seed: int | None,
 ) -> list[Path]:
-    opt_dir = experiment_dir / "opt"
-    tables_dir = opt_dir / "tables"
+    search_dir = experiment_dir / "search"
+    tables_dir = experiment_dir / "output" / "tables" / "model_search"
     tables_dir.mkdir(parents=True, exist_ok=True)
     dual_prefix = "Dual_" if has_input_signals else ""
     model_types = ["Global Att.", "Sing. Dense", "Recurrent", "CPM"]
     model_names = [
-        dual_prefix + "Ultra_" + suffix
+        dual_prefix + "Mimic_" + suffix
         for suffix in ["Att", "Single", "Recurrent", "CPM"]
     ]
     rng = np.random.default_rng(seed)
     generated: list[Path] = []
 
     attention_opt, attention_candidates, attention_metrics = load_model_outputs(
-        opt_dir, model_names[0]
+        search_dir, model_names[0]
     )
     attention_clean = dict(attention_opt)
     attention_clean.update(
@@ -254,12 +254,12 @@ def build_comparisons(
         top=top,
         rng=rng,
     )
-    attention_table = tables_dir / f"{dual_prefix}Ultra_Att.csv"
+    attention_table = tables_dir / f"{dual_prefix}Mimic_Att.csv"
     opt_dict_ranks_table(attention_ranks, attention_clean, attention_table)
     generated.append(attention_table)
 
     recurrent_opt, recurrent_candidates, recurrent_metrics = load_model_outputs(
-        opt_dir, model_names[2]
+        search_dir, model_names[2]
     )
     recurrent_clean = dict(recurrent_opt)
     recurrent_clean.update(
@@ -281,14 +281,14 @@ def build_comparisons(
         top=top,
         rng=rng,
     )
-    recurrent_table = tables_dir / f"{dual_prefix}Ultra_Recurrent.csv"
+    recurrent_table = tables_dir / f"{dual_prefix}Mimic_Recurrent.csv"
     opt_dict_ranks_table(recurrent_ranks, recurrent_clean, recurrent_table)
     generated.append(recurrent_table)
 
     all_candidates: list[dict[Any, Any]] = []
     all_metrics: list[dict[Any, Any]] = []
     for model_name in model_names:
-        _, candidates, metrics = load_model_outputs(opt_dir, model_name)
+        _, candidates, metrics = load_model_outputs(search_dir, model_name)
         all_candidates.append(candidates)
         all_metrics.append(metrics)
 
@@ -312,7 +312,7 @@ def build_comparisons(
         top=top,
         rng=rng,
     )
-    universal_table = tables_dir / f"{dual_prefix}Ultra_Universal.csv"
+    universal_table = tables_dir / f"{dual_prefix}Mimic_Universal.csv"
     opt_dict_ranks_table(universal_ranks, universal_opt, universal_table)
     generated.append(universal_table)
     return generated
@@ -321,8 +321,8 @@ def build_comparisons(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Compare Ultra model search results for one experiment and save "
-            "bootstrap rank tables under experiments/<name>/opt/tables/."
+            "Compare Mimic model search results for one experiment and save "
+            "bootstrap rank tables under experiments/<name>/output/tables/."
         )
     )
     parser.add_argument(
@@ -367,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
         if not experiment_dir.is_dir():
             raise FileNotFoundError(
                 f"Experiment directory not found: {experiment_dir}. "
-                "Run model_opt.py first or pass --experiment-root."
+                "Run model_search.py first or pass --experiment-root."
             )
         input_signals = experiment.get("input_signals", [])
         if input_signals is None:
@@ -389,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
         for table in tables:
             print(f"Saved comparison table: {table}", flush=True)
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
-        print(f"model_ultra_comps: error: {error}", file=sys.stderr)
+        print(f"model_mimic_comps: error: {error}", file=sys.stderr)
         return 1
     return 0
 

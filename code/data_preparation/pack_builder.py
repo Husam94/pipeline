@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Select experiment sites, create sequence/signal packs, and generate splits."""
+"""Build sequence and signal packs from previously selected experiment sites."""
 
 from __future__ import annotations
 
@@ -8,11 +8,7 @@ import csv
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime
 import json
-import re
 import sys
-import tempfile
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -26,43 +22,42 @@ import poseigen_binmeths as bm
 import poseigen_chisel.poseigen_chisel as chis
 import poseigen_seaside.basics as se
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-ENCODE_ROOT = PROJECT_ROOT / "data" / "ENCODE"
-DEFAULT_EXPERIMENT_FILE = PROJECT_ROOT / "data" / "experiments.json"
-DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "data" / "experiments"
-CT_RESOLUTION = 50
-FLAG_WINDOW = 2_000
-FLAG_ZERO_ENDS = 5_000
-NUM_TRANSLATION_WINDOWS = 3
-SPLIT_PROPORTIONS = [0.55, 0.15, 0.15, 0.15]
-SPLIT_SCORE_EPSILON = 1e-12
-PARAMETER_NAMES = (
-    "output_size",
-    "seq_size",
-    "input_size",
-    "translate_bp",
-    "unique_sites",
-)
-METADATA_COLUMNS = (
-    "File name",
-    "Replicate ID",
-    "Pair ID",
-    "Dataset",
-    "Target",
-    "Controls",
-)
-PAIR_ACCESSION_PATTERN = re.compile(r"ENCSR[A-Z0-9]+")
-EXPERIMENT_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*")
-GENOME_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-
-
-@dataclass(frozen=True)
-class SignalPair:
-    pair_id: str
-    target_dataset: str
-    control_dataset: str
-    control_replicate_id: str
+if __package__:
+    from .experiment_context import (
+        CT_RESOLUTION,
+        DEFAULT_EXPERIMENT_FILE,
+        DEFAULT_OUTPUT_ROOT,
+        ENCODE_ROOT,
+        EXPERIMENT_NAME_PATTERN,
+        GENOME_NAME_PATTERN,
+        PARAMETER_NAMES,
+        PROJECT_ROOT,
+        SignalPair,
+        build_signal_pairs,
+        read_experiment_file,
+        read_metadata,
+        resolve_parameters,
+        resolve_signal_pair,
+        write_experiment_file,
+    )
+else:
+    from experiment_context import (
+        CT_RESOLUTION,
+        DEFAULT_EXPERIMENT_FILE,
+        DEFAULT_OUTPUT_ROOT,
+        ENCODE_ROOT,
+        EXPERIMENT_NAME_PATTERN,
+        GENOME_NAME_PATTERN,
+        PARAMETER_NAMES,
+        PROJECT_ROOT,
+        SignalPair,
+        build_signal_pairs,
+        read_experiment_file,
+        read_metadata,
+        resolve_parameters,
+        resolve_signal_pair,
+        write_experiment_file,
+    )
 
 
 class _Tee:
@@ -93,192 +88,7 @@ def _create_log_path(output_root: Path, experiment_name: str) -> Path:
     logs_dir = output_root / experiment_name / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     file_stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
-    return logs_dir / f"processing_exp_data_{file_stamp}.log"
-
-
-def read_experiment_file(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        raise FileNotFoundError(f"Experiment JSON file not found: {path}")
-    with path.open(encoding="utf-8") as experiment_file:
-        experiment = json.load(experiment_file)
-    if not isinstance(experiment, dict):
-        raise ValueError(f"{path} must contain one JSON experiment object.")
-    return experiment
-
-
-def write_experiment_file(
-    path: Path, experiment: dict[str, Any]
-) -> None:
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-            json.dump(experiment, temporary, indent=2, ensure_ascii=False)
-            temporary.write("\n")
-        temporary_path.replace(path)
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
-
-
-def resolve_parameters(
-    experiment: dict[str, Any],
-    cli_values: dict[str, int | None],
-    has_input_signals: bool,
-) -> dict[str, int]:
-    missing: list[str] = []
-    values: dict[str, int] = {}
-    for name in PARAMETER_NAMES:
-        command_value = cli_values[name]
-        value = command_value if command_value is not None else experiment.get(name)
-        experiment[name] = value
-        if value is None and name == "input_size" and not has_input_signals:
-            continue
-        if value is None:
-            missing.append(name)
-            continue
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"{name} must be an integer.")
-        minimum = 0 if name == "translate_bp" else 1
-        if value < minimum:
-            requirement = "non-negative" if name == "translate_bp" else "positive"
-            raise ValueError(f"{name} must be a {requirement} integer.")
-        values[name] = value
-    if missing:
-        raise ValueError(
-            "Missing processing parameter(s): "
-            + ", ".join(missing)
-            + ". Set them in the experiment JSON or provide the matching CLI options."
-        )
-    return values
-
-
-def read_metadata(path: Path) -> list[dict[str, str]]:
-    if not path.is_file():
-        raise FileNotFoundError(f"ENCODE metadata file not found: {path}")
-    with path.open(encoding="utf-8", newline="") as metadata_file:
-        reader = csv.DictReader(metadata_file, delimiter="\t")
-        missing = set(METADATA_COLUMNS).difference(reader.fieldnames or [])
-        if missing:
-            raise ValueError(
-                f"{path} is missing required columns: "
-                + ", ".join(sorted(missing))
-            )
-        return [dict(row) for row in reader]
-
-
-def _split_ids(value: str | None) -> list[str]:
-    return [part.strip() for part in (value or "").split(",") if part.strip()]
-
-
-def _control_accessions(value: str | None) -> list[str]:
-    return list(dict.fromkeys(PAIR_ACCESSION_PATTERN.findall(value or "")))
-
-
-def _single_replicate_id(
-    dataset: str, rows_by_dataset: dict[str, list[dict[str, str]]]
-) -> str:
-    identifiers = {
-        identifier
-        for row in rows_by_dataset.get(dataset, [])
-        for identifier in _split_ids(row.get("Replicate ID"))
-    }
-    if len(identifiers) != 1:
-        raise ValueError(
-            f"Dataset {dataset} must have exactly one Replicate ID in meta_info.txt."
-        )
-    return next(iter(identifiers))
-
-
-def build_signal_pairs(rows: list[dict[str, str]]) -> dict[str, SignalPair]:
-    rows_by_dataset: dict[str, list[dict[str, str]]] = {}
-    for row in rows:
-        dataset = (row.get("Dataset") or "").strip()
-        if dataset:
-            rows_by_dataset.setdefault(dataset, []).append(row)
-
-    pairs: dict[str, SignalPair] = {}
-    for row in rows:
-        target_dataset = (row.get("Dataset") or "").strip()
-        if not target_dataset or not (row.get("Target") or "").strip():
-            continue
-        pair_ids = _split_ids(row.get("Pair ID"))
-        if not pair_ids:
-            continue
-        controls = _control_accessions(row.get("Controls"))
-        if len(pair_ids) != len(controls):
-            raise ValueError(
-                f"Pair IDs for {row.get('File name')} do not align with Controls."
-            )
-        for pair_id, control_dataset in zip(pair_ids, controls):
-            if control_dataset not in rows_by_dataset:
-                raise ValueError(
-                    f"{pair_id}: control dataset {control_dataset} is missing "
-                    "from meta_info.txt."
-                )
-            control_replicate_id = _single_replicate_id(
-                control_dataset, rows_by_dataset
-            )
-            pair = SignalPair(
-                pair_id=pair_id,
-                target_dataset=target_dataset,
-                control_dataset=control_dataset,
-                control_replicate_id=control_replicate_id,
-            )
-            existing = pairs.get(pair_id)
-            if existing is not None and existing != pair:
-                raise ValueError(
-                    f"Pair ID {pair_id} refers to inconsistent metadata rows."
-                )
-            pairs[pair_id] = pair
-    return pairs
-
-
-def resolve_signal_pair(
-    signal_id: str,
-    rows: list[dict[str, str]],
-    pairs: dict[str, SignalPair],
-) -> SignalPair:
-    signal_id = signal_id.strip()
-    if signal_id in pairs:
-        return pairs[signal_id]
-
-    datasets = {
-        (row.get("Dataset") or "").strip()
-        for row in rows
-        if (row.get("File name") or "").strip() == signal_id
-        or signal_id in _split_ids(row.get("Replicate ID"))
-    }
-    datasets.discard("")
-    matching_pairs = {
-        pair.pair_id: pair
-        for pair in pairs.values()
-        if pair.target_dataset in datasets
-    }
-    if len(matching_pairs) == 1:
-        return next(iter(matching_pairs.values()))
-    if len(matching_pairs) > 1:
-        raise ValueError(
-            f"Signal ID {signal_id!r} maps to multiple target/control pairs; "
-            "use a Pair ID from meta_info.txt."
-        )
-    if not datasets:
-        raise ValueError(
-            f"Signal ID {signal_id!r} was not found as a File name, Replicate ID, "
-            "or Pair ID in meta_info.txt."
-        )
-    raise ValueError(
-        f"Signal ID {signal_id!r} does not resolve to a processed target/control "
-        "pair. Run processing_replicates.py first and use a target File name, "
-        "Replicate ID, or Pair ID."
-    )
+    return logs_dir / f"pack_builder_{file_stamp}.log"
 
 
 def _pickle_load(path: Path) -> Any:
@@ -324,24 +134,10 @@ def _load_pair_mode(pair: SignalPair) -> list[np.ndarray]:
     )
 
 
-def _load_control_mean(pair: SignalPair) -> list[np.ndarray]:
-    return _load_current(
-        _pair_file(ENCODE_ROOT / "merged", pair.control_replicate_id, "mean")
-    )
-
-
 def _load_vst(pair: SignalPair):
     return _pickle_load(
         _pair_file(PROJECT_ROOT / "data" / "ENCODE" / "vst", pair.pair_id, "vst_transform")
     )
-
-
-def _percentile_bounds(values: np.ndarray, percentile: float) -> tuple[float, float]:
-    valid = values[np.isfinite(values) & (values > 0)]
-    if not len(valid):
-        raise ValueError("Signal has no positive finite values for thresholding.")
-    low, high = np.percentile(valid, [percentile, 100])
-    return float(low), float(high)
 
 
 def load_genome_data(
@@ -365,18 +161,6 @@ def load_genome_data(
     return basic_ids, autosome_ids, autosome_blacklist, sequences
 
 
-def _validate_current_shapes(currents: list[list[np.ndarray]]) -> None:
-    if not currents:
-        return
-    reference = currents[0]
-    for current in currents[1:]:
-        if len(current) != len(reference) or any(
-            array.shape != reference_array.shape
-            for array, reference_array in zip(current, reference)
-        ):
-            raise ValueError("Signal and control currents have mismatched shapes.")
-
-
 def _save_figure(figure, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(path, bbox_inches="tight")
@@ -384,189 +168,7 @@ def _save_figure(figure, path: Path) -> None:
 
 
 def _progress(message: str) -> None:
-    print(f"[processing_exp_data] {message}", flush=True)
-
-
-def make_flags(
-    experiment_dir: Path,
-    output_pair: SignalPair,
-    input_pairs: list[SignalPair],
-    parameters: dict[str, int],
-    autosome_ids: list[str],
-    blacklist: list[np.ndarray],
-) -> Any:
-    unique_controls = {
-        pair.control_replicate_id for pair in [output_pair, *input_pairs]
-    }
-    _progress(
-        f"{output_pair.pair_id}: loading output signal and "
-        f"{len(unique_controls)} unique control current(s)."
-    )
-    output_mode = _load_pair_mode(output_pair)
-    all_pairs = [output_pair, *input_pairs]
-    controls_by_id: dict[str, list[np.ndarray]] = {}
-    for pair in all_pairs:
-        if pair.control_replicate_id not in controls_by_id:
-            controls_by_id[pair.control_replicate_id] = _load_control_mean(pair)
-    controls = list(controls_by_id.values())
-    _validate_current_shapes([output_mode, *controls, blacklist])
-
-    output_values = np.vstack(output_mode).reshape(-1)
-    output_min, output_max = _percentile_bounds(output_values, 0)
-    control_masks: list[list[np.ndarray]] = []
-    control_thresholds: dict[str, dict[str, float]] = {}
-    for replicate_id, current in controls_by_id.items():
-        low, high = _percentile_bounds(np.vstack(current).reshape(-1), 5)
-        control_thresholds[replicate_id] = {"minimum": low, "maximum": high}
-        control_masks.append(
-            [
-                np.isfinite(chromosome)
-                & (chromosome >= low)
-                & (chromosome <= high)
-                for chromosome in current
-            ]
-        )
-
-    combined_good = [
-        np.asarray(chromosome) > 0
-        for chromosome in blacklist
-    ]
-    combined_good = [
-        good
-        & np.isfinite(signal)
-        & (signal >= output_min)
-        & (signal <= output_max)
-        for good, signal in zip(combined_good, output_mode)
-    ]
-    for masks in control_masks:
-        combined_good = [
-            good & mask for good, mask in zip(combined_good, masks)
-        ]
-    bad_mask = chis.BinCurrentInverter(
-        [mask.astype(np.int8) for mask in combined_good]
-    )
-
-    flag_current = chis.CurrentsZeroEnds(
-        [chromosome + 1 for chromosome in output_mode],
-        reso=CT_RESOLUTION,
-        zeroends=FLAG_ZERO_ENDS,
-    )
-    _progress(
-        f"{output_pair.pair_id}: flagging signal across "
-        f"{len(autosome_ids)} autosomes."
-    )
-    flags = chis.CurrentFlagger(
-        flag_current,
-        reso=CT_RESOLUTION,
-        window=FLAG_WINDOW,
-        stride=1,
-        flagmode=np.argmax,
-        parallel=True,
-    )
-    _progress(f"{output_pair.pair_id}: converting flags to candidate sites.")
-    markers = chis.SigCurrent2Markers(
-        flags,
-        select_BS_ids=autosome_ids,
-        reso=CT_RESOLUTION,
-        select=None,
-        select_mode=None,
-    )
-    markers["val"] = markers["val"] - 1
-    _progress(
-        f"{output_pair.pair_id}: filtering {len(markers):,} candidate sites "
-        "against controls and the blacklist."
-    )
-    filtered_markers = chis.MarkersFilter(
-        markers,
-        bad_mask,
-        autosome_ids,
-        select_BS_ids=None,
-        reso=CT_RESOLUTION,
-        exact=False,
-        Msizes=[
-            parameters["output_size"]
-            + parameters["translate_bp"] * (NUM_TRANSLATION_WINDOWS - 1)
-            + CT_RESOLUTION
-        ],
-        threshold=0,
-        threshmode=np.sum,
-        threshsign=np.equal,
-    )
-    if filtered_markers.empty:
-        raise ValueError(
-            f"{output_pair.pair_id}: no flag sites remain after control and "
-            "blacklist filtering."
-        )
-
-    output_transform = _load_vst(output_pair)
-    _progress(
-        f"{output_pair.pair_id}: selecting "
-        f"{parameters['unique_sites']:,} sites from "
-        f"{len(filtered_markers):,} filtered candidates."
-    )
-    transformed_values = np.asarray(
-        output_transform(np.asarray(filtered_markers["val"])),
-        dtype=np.float64,
-    ).reshape(-1)
-    if not np.all(np.isfinite(transformed_values)):
-        raise ValueError(f"{output_pair.pair_id}: VST produced non-finite site values.")
-    if parameters["unique_sites"] > len(filtered_markers):
-        raise ValueError(
-            f"unique_sites={parameters['unique_sites']} exceeds the "
-            f"{len(filtered_markers)} filtered flag sites."
-        )
-    value_bins = bm.HistBinning(transformed_values, bins=1_000)
-    selected_indices = bm.Harpoon(
-        value_bins,
-        select=parameters["unique_sites"],
-    )
-    if len(selected_indices) != parameters["unique_sites"]:
-        raise ValueError(
-            f"{output_pair.pair_id}: site selection returned "
-            f"{len(selected_indices)} sites; expected {parameters['unique_sites']}."
-        )
-    selected_sites = chis.SortMarkers(
-        filtered_markers.iloc[selected_indices].copy(),
-        autosome_ids,
-    )
-
-    flag_dir = experiment_dir / "flag"
-    figs_dir = flag_dir / "figs"
-    flag_dir.mkdir(parents=True, exist_ok=True)
-    _pickle_dump(flags, flag_dir / "flags.p")
-    _pickle_dump(markers, flag_dir / "flag_markers.p")
-    _pickle_dump(filtered_markers, flag_dir / "filtered_flag_markers.p")
-    _pickle_dump(selected_sites, flag_dir / "selected_sites.p")
-    _pickle_dump(bad_mask, flag_dir / "bad_site_mask.p")
-    with (flag_dir / "control_thresholds.json").open("w", encoding="utf-8") as file:
-        json.dump(
-            {
-                "output_signal_minimum": output_min,
-                "output_signal_maximum": output_max,
-                "control_thresholds": control_thresholds,
-                "control_replicate_ids": list(controls_by_id),
-            },
-            file,
-            indent=2,
-        )
-        file.write("\n")
-
-    figure, axis = plt.subplots(figsize=(8, 5))
-    axis.hist(transformed_values, bins=100, color="steelblue")
-    axis.set(title="Filtered output-signal values", xlabel="VST value", ylabel="Sites")
-    _save_figure(figure, figs_dir / "output_signal_distribution.png")
-
-    counts = selected_sites["subseq"].value_counts().reindex(autosome_ids, fill_value=0)
-    figure, axis = plt.subplots(figsize=(12, 5))
-    axis.bar(counts.index.astype(str), counts.to_numpy())
-    axis.set(title="Selected sites by chromosome", xlabel="Chromosome", ylabel="Sites")
-    axis.tick_params(axis="x", rotation=45)
-    _save_figure(figure, figs_dir / "selected_sites_by_chromosome.png")
-    _progress(
-        f"{output_pair.pair_id}: selected {len(selected_sites):,} sites "
-        "after control/blacklist filtering; flag outputs and figures saved."
-    )
-    return selected_sites
+    print(f"[pack_builder] {message}", flush=True)
 
 
 def _normalized_scores(
@@ -623,7 +225,9 @@ def make_packs(
     sequences: list[str],
     parameters: dict[str, int],
 ) -> None:
-    translate_width = parameters["translate_bp"] * (NUM_TRANSLATION_WINDOWS - 1)
+    translate_width = parameters["translate_bp"] * (
+        parameters["num_trans_wins"] - 1
+    )
     output_width = parameters["output_size"] + translate_width
     sequence_width = parameters["seq_size"] + translate_width
 
@@ -752,7 +356,13 @@ def make_packs(
     _pickle_dump(bin_sizes, experiment_dir / "packs" / "output_bin_sizes.p")
 
     pack_dir = experiment_dir / "packs"
-    pack_figs = pack_dir / "figs"
+    pack_figs = (
+        experiment_dir
+        / "output"
+        / "figures"
+        / "data_preparation"
+        / "pack_builder"
+    )
     pack_dir.mkdir(parents=True, exist_ok=True)
     for name, pack in packs.items():
         _pickle_dump(pack, pack_dir / f"{name}.p")
@@ -789,10 +399,10 @@ def make_packs(
             resos=[pack_resolutions[name]],
             slice_size=[pack_sizes[name]],
             slice_mode=None,
-            num_trans=NUM_TRANSLATION_WINDOWS,
+            num_trans=parameters["num_trans_wins"],
         )[0]
         translated = np.swapaxes(augmented, -1, -2)
-        if len(translated) != len(markers) * NUM_TRANSLATION_WINDOWS:
+        if len(translated) != len(markers) * parameters["num_trans_wins"]:
             raise ValueError(
                 f"{name}: translation augmentation changed the expected site count."
             )
@@ -820,184 +430,6 @@ def make_packs(
         f"{output_pair.pair_id}: saved {len(packs)} signal/sequence packs "
         "and associated figures."
     )
-
-
-def _score_split(
-    split: list[np.ndarray],
-    packed_bind: np.ndarray,
-    categories: np.ndarray,
-    all_bin_counts: np.ndarray,
-    bin_sizes: np.ndarray,
-) -> float:
-    split_scores = []
-    for indices in split:
-        counts = bm.BinCount(
-            packed_bind[indices],
-            uni=categories,
-            prop=True,
-            bin_sizes=bin_sizes,
-        )
-        relative_error = np.abs(counts - all_bin_counts) / (
-            all_bin_counts + SPLIT_SCORE_EPSILON
-        )
-        split_scores.append(float(np.mean(bin_sizes * relative_error)))
-    return float(np.mean(split_scores))
-
-
-def make_splits(
-    experiment_dir: Path,
-    markers: Any,
-    bin_sizes: np.ndarray,
-    split_candidates: int,
-    split_cycles: int,
-    seed: int | None,
-) -> None:
-    if "group" not in markers:
-        raise ValueError(
-            "Selected sites have no 'group' column required for grouped splits."
-        )
-    if not (experiment_dir / "packs" / "tpack_output_scores.p").is_file():
-        raise FileNotFoundError("Missing translation-augmented output score pack.")
-    translated_scores = _pickle_load(
-        experiment_dir / "packs" / "tpack_output_scores.p"
-    )
-    translated_bind = _pickle_load(
-        experiment_dir / "packs" / "tpack_output_bind.p"
-    )
-    horizontal_scores = np.asarray(
-        chis.StackTransAugsHorizontal(
-            translated_scores,
-            num_shifts=NUM_TRANSLATION_WINDOWS,
-        )
-    )
-    horizontal_bind = np.asarray(
-        chis.StackTransAugsHorizontal(
-            translated_bind,
-            num_shifts=NUM_TRANSLATION_WINDOWS,
-        )
-    )
-    groups = np.asarray(markers["group"])
-    if len(groups) != len(markers) or len(horizontal_scores) != len(groups):
-        raise ValueError("Grouped split inputs do not align with selected sites.")
-
-    categories = np.unique(horizontal_bind)
-    all_bin_counts = bm.BinCount(
-        horizontal_bind,
-        uni=categories,
-        prop=True,
-        bin_sizes=bin_sizes,
-    )
-    if seed is not None:
-        np.random.seed(seed)
-    best_overall_split: list[np.ndarray] | None = None
-    best_overall_score = float("inf")
-    cycle_scores: list[float] = []
-    max_workers = min(4, max(1, split_candidates))
-    _progress(
-        f"{experiment_dir.name}: searching {split_candidates:,} candidate "
-        f"splits across {split_cycles} cycle(s)."
-    )
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for cycle in range(split_cycles):
-            _progress(
-                f"{experiment_dir.name}: starting split-search cycle "
-                f"{cycle + 1}/{split_cycles}."
-            )
-            best_cycle_split: list[np.ndarray] | None = None
-            best_cycle_score = float("inf")
-            next_report = max(1, split_candidates // 10)
-            for offset in range(0, split_candidates, 128):
-                count = min(128, split_candidates - offset)
-                candidates = bm.SplitGen_Random(
-                    len(horizontal_scores),
-                    num_splits=count,
-                    proportions=SPLIT_PROPORTIONS,
-                    group=groups,
-                )
-                if count == 1:
-                    candidates = [candidates]
-                scores = list(
-                    executor.map(
-                        lambda split: _score_split(
-                            split,
-                            horizontal_bind,
-                            categories,
-                            all_bin_counts,
-                            bin_sizes,
-                        ),
-                        candidates,
-                    )
-                )
-                best_index = int(np.argmin(scores))
-                if scores[best_index] < best_cycle_score:
-                    best_cycle_score = scores[best_index]
-                    best_cycle_split = [
-                        np.asarray(indices).copy()
-                        for indices in candidates[best_index]
-                    ]
-                processed = offset + count
-                if processed >= next_report or processed == split_candidates:
-                    _progress(
-                        f"{experiment_dir.name}: split cycle "
-                        f"{cycle + 1}/{split_cycles}, "
-                        f"{processed:,}/{split_candidates:,} candidates checked."
-                    )
-                    next_report = processed + max(1, split_candidates // 10)
-            if best_cycle_split is None:
-                raise RuntimeError("Split generation returned no candidates.")
-            cycle_scores.append(best_cycle_score)
-            _progress(
-                f"Split cycle {cycle + 1}/{split_cycles}: "
-                f"best score {best_cycle_score:.6g}"
-            )
-            if best_cycle_score < best_overall_score:
-                best_overall_score = best_cycle_score
-                best_overall_split = best_cycle_split
-
-    if best_overall_split is None:
-        raise RuntimeError("No split was selected.")
-    expanded_split = bm.SplitExpander(
-        1,
-        NUM_TRANSLATION_WINDOWS,
-        best_overall_split,
-        ma=None,
-    )
-    split_dir = experiment_dir / "split"
-    split_figs = split_dir / "figs"
-    split_dir.mkdir(parents=True, exist_ok=True)
-    _pickle_dump(best_overall_split, split_dir / "split.p")
-    _pickle_dump(expanded_split, split_dir / "split_transaug.p")
-    _write_json(
-        {
-            "best_score": best_overall_score,
-            "cycle_scores": cycle_scores,
-            "proportions": SPLIT_PROPORTIONS,
-            "split_candidates_per_cycle": split_candidates,
-            "split_cycles": split_cycles,
-            "seed": seed,
-        },
-        split_dir / "split_metadata.json",
-    )
-
-    figure, axis = plt.subplots(figsize=(7, 5))
-    axis.bar(
-        ["Train", "Stop", "Eval", "Test"],
-        [len(indices) for indices in best_overall_split],
-        color="slateblue",
-    )
-    axis.set(title="Selected sites by split", ylabel="Sites")
-    _save_figure(figure, split_figs / "split_sizes.png")
-
-    figure, axis = plt.subplots(figsize=(8, 5))
-    axis.plot(np.arange(1, len(cycle_scores) + 1), cycle_scores, marker="o")
-    axis.set(
-        title="Best split score by cycle",
-        xlabel="Cycle",
-        ylabel="Weighted relative bin error",
-    )
-    _save_figure(figure, split_figs / "split_scores.png")
-    _progress(f"{experiment_dir.name}: split files and figures saved to {split_dir}.")
 
 
 def process_experiment(
@@ -1060,19 +492,17 @@ def process_experiment(
     if not input_pairs:
         _progress(f"{name}: no input signals specified; continuing without input packs.")
     _progress(f"{name}: loading prepared genome resources for {genome}.")
-    basic_ids, autosome_ids, blacklist, sequences = load_genome_data(genome)
+    basic_ids, autosome_ids, _, sequences = load_genome_data(genome)
     experiment_dir = args.output_root / name
-    for folder in ("flag", "packs", "split"):
-        (experiment_dir / folder / "figs").mkdir(parents=True, exist_ok=True)
-
-    selected_sites = make_flags(
-        experiment_dir,
-        output_pair,
-        input_pairs,
-        parameters,
-        autosome_ids,
-        blacklist,
-    )
+    selected_sites_path = experiment_dir / "flag" / "selected_sites.p"
+    if not selected_sites_path.is_file():
+        raise FileNotFoundError(
+            f"{name}: selected sites not found at {selected_sites_path}; "
+            "run site_selection.py first."
+        )
+    selected_sites = _pickle_load(selected_sites_path)
+    if not hasattr(selected_sites, "columns") or selected_sites.empty:
+        raise ValueError(f"{name}: selected sites are missing or empty.")
     make_packs(
         experiment_dir,
         output_pair,
@@ -1083,16 +513,7 @@ def process_experiment(
         sequences,
         parameters,
     )
-    bin_sizes = _pickle_load(experiment_dir / "packs" / "output_bin_sizes.p")
-    make_splits(
-        experiment_dir,
-        selected_sites,
-        np.asarray(bin_sizes),
-        args.split_candidates,
-        args.split_cycles,
-        args.seed,
-    )
-    _progress(f"Completed experiment {name!r}; outputs are in {experiment_dir}.")
+    _progress(f"Completed pack generation for {name!r}; outputs are in {experiment_dir}.")
 
 
 def run_experiment_with_log(
@@ -1132,8 +553,8 @@ def run_experiment_with_log(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Create filtered flag sites, sequence/signal packs, and grouped "
-            "train/stop/eval/test splits for one experiment in a JSON file."
+            "Build sequence and signal packs from selected sites for one "
+            "experiment in a JSON file."
         )
     )
     parser.add_argument(
@@ -1164,23 +585,7 @@ def main(argv: list[str] | None = None) -> int:
                 "integers are required except translate-bp, which may be zero"
             ),
         )
-    parser.add_argument(
-        "--split-candidates",
-        type=int,
-        default=10_000,
-        help="Random split candidates per cycle (default: 10000, as in the notebook)",
-    )
-    parser.add_argument(
-        "--split-cycles",
-        type=int,
-        default=10,
-        help="Number of split-search cycles (default: 10, as in the notebook)",
-    )
-    parser.add_argument("--seed", type=int, help="Seed for reproducible split search")
     args = parser.parse_args(argv)
-
-    if args.split_candidates <= 0 or args.split_cycles <= 0:
-        parser.error("--split-candidates and --split-cycles must be positive.")
 
     try:
         _progress(f"Reading experiment definitions from {args.experiment_file}.")
@@ -1197,7 +602,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         _progress("Experiment processing completed.")
     except (OSError, ValueError, csv.Error, RuntimeError) as error:
-        print(f"processing_exp_data: error: {error}", file=sys.stderr)
+        print(f"pack_builder: error: {error}", file=sys.stderr)
         return 1
     return 0
 

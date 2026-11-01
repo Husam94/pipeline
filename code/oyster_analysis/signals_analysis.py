@@ -23,23 +23,27 @@ from sklearn.cluster import AgglomerativeClustering, KMeans
 import poseigen_oyster.analysis as interp
 import poseigen_seaside.basics as se
 import poseigen_trident.utils as tu
-from interp_dna import load_ensemble_manifest
-from interp_ensemble import (
+
+CODE_ROOT = Path(__file__).resolve().parents[1]
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+
+from dna_analysis import load_ensemble_manifest
+from ensemble_analysis import (
     DEFAULT_EXPERIMENT_FILE,
     DEFAULT_EXPERIMENT_ROOT,
-    DEFAULT_LOSS,
-    DEFAULT_XP_RUN,
+    model_analysis_dir,
     read_experiment,
     resolve_fit_folder,
 )
-from processing_exp_data import (
+from data_preparation.experiment_context import (
     build_signal_pairs,
     read_metadata,
     resolve_signal_pair,
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_METADATA_FILE = PROJECT_ROOT / "data" / "ENCODE" / "meta_info.txt"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -51,25 +55,15 @@ def _file_signature(path: Path) -> dict[str, int]:
     return {"size": stat.st_size, "modified_ns": stat.st_mtime_ns}
 
 
-def _load_model_config(experiment_dir: Path) -> dict[str, Any]:
-    model_dir = experiment_dir / "opt" / "Dual_Oyster"
-    ro_args_path = model_dir / "RO_args.p"
-    if not ro_args_path.is_file():
-        raise FileNotFoundError(
-            f"Missing Dual_Oyster optimizer arguments: {ro_args_path}. "
-            "Run model_opt.py first."
-        )
-    ro_args = se.PickleLoad(str(ro_args_path))
-    ro_path = Path(ro_args["pn"])
-    if not ro_path.is_absolute():
-        ro_path = experiment_dir / ro_path
-    config_path = ro_path / "best_config.p"
+def _load_model_config(ensemble_dir: Path) -> dict[str, Any]:
+    config_path = ensemble_dir / "model_config.json"
     if not config_path.is_file():
         raise FileNotFoundError(
-            f"Missing best Dual_Oyster configuration: {config_path}. "
-            "Complete model_opt.py's top-model refinement first."
+            f"Missing Oyster model metadata: {config_path}. "
+            "Run ensemble_analysis.py first."
         )
-    config = se.PickleLoad(str(config_path))
+    with config_path.open(encoding="utf-8") as config_file:
+        config = json.load(config_file)
     if not isinstance(config, dict):
         raise ValueError(f"Unexpected model configuration in {config_path}.")
     return config
@@ -655,13 +649,15 @@ def _write_csv_if_needed(
 def _write_outputs(
     result: dict[str, Any],
     output_dir: Path,
+    figures_dir: Path,
+    tables_dir: Path,
     bin_sizes: Any,
     rewrite: bool,
     top_clusters: int,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    figure_dir = output_dir / "figs"
-    figure_dir.mkdir(exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    tables_dir.mkdir(parents=True, exist_ok=True)
 
     signal_names = result["signal_names"]
     signal_mapping = result["signal_mapping"]
@@ -718,7 +714,7 @@ def _write_outputs(
         print(f"Reusing existing {signal_path}.", flush=True)
     outputs.append(signal_path)
 
-    feature_csv = output_dir / "feature_contributions.csv"
+    feature_csv = tables_dir / "feature_contributions.csv"
 
     def write_features(path: Path) -> None:
         with path.open("w", encoding="utf-8", newline="") as output_file:
@@ -767,7 +763,7 @@ def _write_outputs(
         if np.any(selected):
             medians[bin_index] = np.median(influence_values[selected], axis=0)
 
-    influence_csv = output_dir / "signal_influence_by_bin.csv"
+    influence_csv = tables_dir / "signal_influence_by_bin.csv"
 
     def write_influence(path: Path) -> None:
         with path.open("w", encoding="utf-8", newline="") as output_file:
@@ -796,7 +792,7 @@ def _write_outputs(
     _write_csv_if_needed(influence_csv, rewrite, write_influence)
     outputs.append(influence_csv)
 
-    influence_figure = figure_dir / "signal_influence_by_target_bin.png"
+    influence_figure = figures_dir / "signal_influence_by_target_bin.png"
     if rewrite or not influence_figure.is_file():
         figure, axis = plt.subplots(figsize=(11, 6))
         for feature_index, feature_name in enumerate(feature_names):
@@ -836,7 +832,7 @@ def _write_outputs(
         print(f"Reusing existing {cluster_path}.", flush=True)
     outputs.append(cluster_path)
 
-    cluster_csv = output_dir / "signal_kmer_cluster_contributions.csv"
+    cluster_csv = tables_dir / "signal_kmer_cluster_contributions.csv"
 
     def write_clusters(path: Path) -> None:
         with path.open("w", encoding="utf-8", newline="") as output_file:
@@ -872,7 +868,7 @@ def _write_outputs(
     _write_csv_if_needed(cluster_csv, rewrite, write_clusters)
     outputs.append(cluster_csv)
 
-    cluster_figure = figure_dir / "signal_kmer_cluster_contributions.png"
+    cluster_figure = figures_dir / "signal_kmer_cluster_contributions.png"
     if rewrite or not cluster_figure.is_file():
         figure, axes = plt.subplots(
             len(signal_names),
@@ -922,7 +918,7 @@ def run_analysis(args: argparse.Namespace) -> Path:
     experiment = read_experiment(args.experiment_file)
     if not experiment["input_signals"]:
         raise ValueError(
-            "interp_signals.py requires at least one input signal in the "
+            "signals_analysis.py requires at least one input signal in the "
             "experiment JSON."
         )
     print(
@@ -932,13 +928,13 @@ def run_analysis(args: argparse.Namespace) -> Path:
     )
 
     experiment_dir = args.experiment_root.resolve() / experiment["experiment_name"]
-    fit_folder, _, _, _ = resolve_fit_folder(
+    _, _, _, config_name = resolve_fit_folder(
         experiment_dir,
         "Dual_Oyster",
         args.xp_run,
         args.loss,
     )
-    ensemble_dir = fit_folder / "ensemble_interp"
+    ensemble_dir = model_analysis_dir(experiment_dir, config_name)
     manifest = load_ensemble_manifest(ensemble_dir)
     if manifest["model_name"] != "Dual_Oyster":
         raise ValueError(
@@ -946,7 +942,7 @@ def run_analysis(args: argparse.Namespace) -> Path:
         )
     print(f"Using weighted Dual_Oyster ensemble in {ensemble_dir}.", flush=True)
 
-    config = _load_model_config(experiment_dir)
+    config = _load_model_config(ensemble_dir)
     input_signal_shape = tuple(config.get("B_dim_i", ()))
     kmer_length = int(config.get("B_kE_k", 0))
     if len(input_signal_shape) != 3 or kmer_length <= 0:
@@ -981,7 +977,23 @@ def run_analysis(args: argparse.Namespace) -> Path:
         signal_names,
         args,
     )
-    output_dir = ensemble_dir / "signals"
+    output_dir = ensemble_dir / "analysis" / "signals"
+    figures_dir = (
+        experiment_dir
+        / "output"
+        / "figures"
+        / "oyster_models"
+        / config_name
+        / "signals"
+    )
+    tables_dir = (
+        experiment_dir
+        / "output"
+        / "tables"
+        / "oyster_models"
+        / config_name
+        / "signals"
+    )
     cache_path = output_dir / "signals_analysis.p"
     if cache_path.is_file() and not args.rewrite:
         result = se.PickleLoad(str(cache_path))
@@ -1085,16 +1097,18 @@ def run_analysis(args: argparse.Namespace) -> Path:
     outputs = _write_outputs(
         result,
         output_dir,
+        figures_dir,
+        tables_dir,
         se.PickleLoad(str(experiment_dir / "packs" / "output_bin_sizes.p")),
         rewrite=args.rewrite,
         top_clusters=args.top_clusters,
     )
     print(
-        f"Signal and sequence contribution outputs are ready in {output_dir} "
-        f"({len(outputs)} files).",
+        f"Signal and sequence contribution figures and tables are ready under "
+        f"{experiment_dir / 'output'} ({len(outputs)} files).",
         flush=True,
     )
-    return output_dir
+    return experiment_dir / "output"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1125,13 +1139,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--xp-run",
-        default=DEFAULT_XP_RUN,
-        help=f"Fitting run folder (default: {DEFAULT_XP_RUN})",
+        help="Override the selected fitting run; omit both overrides to use model_selection.json.",
     )
     parser.add_argument(
         "--loss",
-        default=DEFAULT_LOSS,
-        help=f"Fitting loss folder (default: {DEFAULT_LOSS})",
+        help="Override the selected fit condition; omit both overrides to use model_selection.json.",
     )
     parser.add_argument(
         "--batch-size",
@@ -1181,9 +1193,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         output_dir = run_analysis(args)
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
-        print(f"interp_signals: error: {error}", file=sys.stderr)
+        print(f"signals_analysis: error: {error}", file=sys.stderr)
         return 1
-    print(f"Completed interp_signals.py: {output_dir}", flush=True)
+    print(f"Completed signals_analysis.py: {output_dir}", flush=True)
     return 0
 
 

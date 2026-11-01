@@ -20,6 +20,7 @@ PARAMETER_NAMES = (
     "seq_size",
     "input_size",
     "translate_bp",
+    "num_trans_wins",
     "unique_sites",
 )
 EXPERIMENT_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]*")

@@ -152,14 +152,30 @@ def main():
     #------------------------------------
 
     xpsfolder = se.NewFolder("xps")
-    optfolder = se.NewFolder("opt")
+    searchfolder = se.NewFolder("search")
 
-    if len(tri_tpacks) == 4: modx_names_formal = ['DeepSTARR', 'Ultra_CPM', 'Oyster']
-    else: modx_names_formal = ['BiChrom', 'Dual_Ultra_CPM', 'Dual_Oyster']
+    if len(tri_tpacks) == 4: modx_names_formal = ['DeepSTARR', 'Mimic_CPM', 'Oyster']
+    else: modx_names_formal = ['BiChrom', 'Dual_Mimic_CPM', 'Dual_Oyster']
+    configured_models = experiment.get("models_to_search")
+    if configured_models is not None:
+        if (
+            not isinstance(configured_models, list)
+            or not configured_models
+            or any(not isinstance(model, str) or not model for model in configured_models)
+        ):
+            raise ValueError("models_to_search must be a non-empty list of model names.")
+        modx_names_formal = [
+            model for model in modx_names_formal if model in configured_models
+        ]
+        if not modx_names_formal:
+            raise ValueError(
+                "models_to_search must include a model with top-model refinement "
+                "before model-fitting experiments can run."
+            )
 
     modx_configs = {}
     for modx in modx_names_formal:
-        pn_modx = se.NewFolder(optfolder + modx)
+        pn_modx = se.NewFolder(searchfolder + modx)
         pn_modx_RO_args = pn_modx + "RO_args"
         modx_RO_args = se.PickleLoad(pn_modx_RO_args)
         best_config = se.PickleLoad(modx_RO_args["pn"] + "best_config")
@@ -172,7 +188,7 @@ def main():
     #===================================
     modx_names_full = []
     for cof_name in modx_names_formal: 
-        argoz = se.PickleLoad(f'{optfolder}{cof_name}/RO_args')
+        argoz = se.PickleLoad(f'{searchfolder}{cof_name}/RO_args')
         RO_folo = argoz['pn']
         best_config_idx = se.PickleLoad(RO_folo + 'best_config_idx')
         match = re.search(r'RO_(\d+)$', Path(RO_folo).name)
@@ -187,15 +203,45 @@ def main():
     d_s_eval = d_s_full[split_eval]
 
     pn_speclog_params = datafolder + f"{targx}_speclog_params.p"
-    if os.path.exists(pn_speclog_params): 
+    legacy_vst_path = datafolder + f"{targx}_vst_transform.p"
+    if os.path.exists(pn_speclog_params):
         speclog_paramo = True
         speclog_params = se.PickleLoad(datafolder + f"{targx}_speclog_params")
-    else: 
-        vst_transform = se.PickleLoad(datafolder + f'{targx}_vst_transform')
+        targx_max = se.PickleLoad(datafolder + f"{targx}_max")
+        targx_shift = se.PickleLoad(datafolder + f"{targx}_shift")
+        normalize_oracle = True
+    else:
         speclog_paramo = False
+        if os.path.exists(legacy_vst_path):
+            vst_transform = se.PickleLoad(datafolder + f"{targx}_vst_transform")
+        else:
+            vst_path = (
+                PROJECT_ROOT / "data" / "ENCODE" / "vst" / f"{targx}_vst_transform.p"
+            )
+            if not vst_path.is_file():
+                raise FileNotFoundError(
+                    f"VST transform not found for target {targx!r}: {vst_path}"
+                )
+            vst_transform = se.PickleLoad(str(vst_path))
 
-    targx_max = se.PickleLoad(datafolder + f"{targx}_max")
-    targx_shift = se.PickleLoad(datafolder + f"{targx}_shift")
+        maximum_path = datafolder + f"{targx}_max.p"
+        shift_path = datafolder + f"{targx}_shift.p"
+        has_maximum = os.path.exists(maximum_path)
+        has_shift = os.path.exists(shift_path)
+        if has_maximum != has_shift:
+            raise FileNotFoundError(
+                f"Incomplete legacy target normalization metadata for {targx!r} "
+                f"in {datafolder}."
+            )
+        normalize_oracle = has_maximum
+        if normalize_oracle:
+            targx_max = se.PickleLoad(datafolder + f"{targx}_max")
+            targx_shift = se.PickleLoad(datafolder + f"{targx}_shift")
+        else:
+            print(
+                "Using unnormalized VST-scale oracle values; weighted linear "
+                "calibration removes affine scale and shift."
+            )
 
     pn_oracle_preds_shifted = xpsfolder + f"oracle_preds_shifted_{targx}.p"
 
@@ -228,7 +274,10 @@ def main():
         else: oracle_preds_reps = vst_transform(oracle_preds_novst_reps)
 
         oracle_preds_noshift = np.mean(oracle_preds_reps, axis=0)
-        oracle_preds = (oracle_preds_noshift - targx_shift) / targx_max
+        if normalize_oracle:
+            oracle_preds = (oracle_preds_noshift - targx_shift) / targx_max
+        else:
+            oracle_preds = oracle_preds_noshift
 
         y = d_y_eval.reshape(-1).astype(float)
         x = oracle_preds.reshape(-1).astype(float)

@@ -17,9 +17,9 @@ from download_encode import FILE_ACCESSION_PATTERN, ensure_metadata_columns
 LOWEST_RESOLUTION = 10
 TARGET_RESOLUTION = 50
 WINDOW_SIZE = 200
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENCODE_ROOT = PROJECT_ROOT / "data" / "ENCODE"
-GENOME_ROOT = PROJECT_ROOT / "data" / "genomes" / "hg38"
+GENOME_ROOT = PROJECT_ROOT / "data" / "genomes"
 
 
 def parse_accessions(values: list[str], input_file: Path | None) -> list[str]:
@@ -44,31 +44,37 @@ def parse_accessions(values: list[str], input_file: Path | None) -> list[str]:
 
 
 def load_genome_resources(
+    genome: str = "hg38",
 ) -> tuple[list[int], list[str], list[str], list[str], list[np.ndarray]]:
+    genome_root = GENOME_ROOT / genome
     required = (
-        GENOME_ROOT / "hg38_id_sizes.p",
-        GENOME_ROOT / "hg38_basic_id_sizes.p",
-        GENOME_ROOT / "hg38_basic_BLC_LR50.p",
+        genome_root / f"{genome}_id_sizes.p",
+        genome_root / f"{genome}_basic_id_sizes.p",
+        genome_root / f"{genome}_basic_BLC_LR50.p",
     )
     missing = [path for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError(
-            "Missing hg38 processing resource(s): "
+            f"Missing {genome} processing resource(s): "
             + ", ".join(str(path) for path in missing)
         )
 
-    genome_ids, genome_sizes = se.PickleLoad(str(GENOME_ROOT / "hg38_id_sizes"))
-    basic_ids, _ = se.PickleLoad(str(GENOME_ROOT / "hg38_basic_id_sizes"))
+    genome_ids, genome_sizes = se.PickleLoad(
+        str(genome_root / f"{genome}_id_sizes")
+    )
+    basic_ids, _ = se.PickleLoad(str(genome_root / f"{genome}_basic_id_sizes"))
     blacklist_current = se.PickleLoad(
-        str(GENOME_ROOT / "hg38_basic_BLC_LR50")
+        str(genome_root / f"{genome}_basic_BLC_LR50")
     )
 
     if len(basic_ids) < 4:
-        raise ValueError("hg38 basic chromosome list is too short to select autosomes.")
+        raise ValueError(
+            f"{genome} basic chromosome list is too short to select autosomes."
+        )
     autosome_ids = basic_ids[:-3]
     if len(blacklist_current) != len(basic_ids):
         raise ValueError(
-            "hg38 blacklist current and basic chromosome list have different lengths."
+            f"{genome} blacklist current and basic chromosome list have different lengths."
         )
 
     return genome_sizes, genome_ids, basic_ids, autosome_ids, blacklist_current
@@ -204,7 +210,7 @@ def process_accession(
         stage_dir.mkdir(parents=True, exist_ok=True)
 
     output_paths = {
-        stage: stage_dirs[stage] / f"{accession}_{stage}.p"
+        stage: stage_dirs[stage] / f"{accession}.p"
         for stage in stage_dirs
     }
 
@@ -293,12 +299,17 @@ def main() -> int:
         type=Path,
         help="Text file of accessions separated by tabs, commas, or newlines.",
     )
+    parser.add_argument(
+        "--genome",
+        default="hg38",
+        help="Genome name used for prepared resources (default: hg38).",
+    )
     args = parser.parse_args()
 
     try:
         accessions = parse_accessions(args.accessions, args.input_file)
         metadata = read_metadata(ENCODE_ROOT / "meta_info.txt")
-        resources = load_genome_resources()
+        resources = load_genome_resources(args.genome)
     except (OSError, ValueError) as error:
         parser.error(str(error))
 

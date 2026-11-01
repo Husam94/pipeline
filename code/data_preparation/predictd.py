@@ -354,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
             f"or digits): {', '.join(invalid)}"
         )
 
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     encode_dir = project_root / "data" / "ENCODE"
     metadata_path = encode_dir / "meta_info.txt"
     raw_dir = encode_dir / "raw"

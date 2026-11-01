@@ -17,11 +17,10 @@ import poseigen_chisel as chis
 import poseigen_oyster.analysis as interp
 import poseigen_seaside.basics as se
 
-from interp_ensemble import (
+from ensemble_analysis import (
     DEFAULT_EXPERIMENT_FILE,
     DEFAULT_EXPERIMENT_ROOT,
-    DEFAULT_LOSS,
-    DEFAULT_XP_RUN,
+    model_analysis_dir,
     read_experiment,
     resolve_fit_folder,
 )
@@ -31,7 +30,7 @@ def load_ensemble_manifest(ensemble_dir: Path) -> dict[str, Any]:
     path = ensemble_dir / "ensemble_manifest.json"
     if not path.is_file():
         raise FileNotFoundError(
-            f"Weighted ensemble is missing: {path}. Run interp_ensemble.py first."
+            f"Weighted ensemble is missing: {path}. Run ensemble_analysis.py first."
         )
     with path.open(encoding="utf-8") as manifest_file:
         manifest = json.load(manifest_file)
@@ -58,9 +57,16 @@ def load_ensemble_manifest(ensemble_dir: Path) -> dict[str, Any]:
         or not np.isclose(weights_array.sum(), 1.0)
     ):
         raise ValueError(f"Ensemble weights in {path} must be finite and sum to 1.")
+    resolved_paths = []
     for model_path in paths:
-        if not Path(f"{model_path}.pt").is_file():
-            raise FileNotFoundError(f"Ensemble checkpoint not found: {model_path}.pt")
+        checkpoint_base = Path(model_path)
+        if not checkpoint_base.is_absolute():
+            checkpoint_base = ensemble_dir / checkpoint_base
+        checkpoint = Path(f"{checkpoint_base}.pt")
+        if not checkpoint.is_file():
+            raise FileNotFoundError(f"Ensemble checkpoint not found: {checkpoint}")
+        resolved_paths.append(str(checkpoint_base.resolve()))
+    manifest["model_paths"] = resolved_paths
     return manifest
 
 
@@ -216,15 +222,15 @@ def _summarize_motifs(
 def write_motif_outputs(
     scored: dict[str, Any],
     config: dict[str, Any],
-    output_dir: Path,
+    cache_dir: Path,
+    figures_dir: Path,
+    tables_dir: Path,
     top_n: int,
     rewrite: bool = False,
 ) -> list[Path]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    figures_dir = output_dir / "figs"
-    figures_dir.mkdir(exist_ok=True)
-    motifs_dir = output_dir / "tables"
-    motifs_dir.mkdir(exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    tables_dir.mkdir(parents=True, exist_ok=True)
 
     motif_profiles, motif_profiles_filled = _summarize_motifs(scored, config)
     motif_names = scored["summary_motif_names"]
@@ -239,14 +245,14 @@ def write_motif_outputs(
     order = np.argsort(np.nan_to_num(np.abs(max_abs), nan=-np.inf))[::-1]
     profile_indices = order[:top_n]
 
-    kmer_csv = motifs_dir / "kmer_motif_contributions.csv"
+    kmer_csv = tables_dir / "kmer_motif_contributions.csv"
     if rewrite or not kmer_csv.is_file():
         _write_matrix_csv(kmer_csv, scored["kmer_names"], scored["kmer_scores"])
         print(f"Saved {kmer_csv}", flush=True)
     else:
         print(f"Reusing existing {kmer_csv}", flush=True)
 
-    summary_csv = motifs_dir / "motif_contributions.csv"
+    summary_csv = tables_dir / "motif_contributions.csv"
     if rewrite or not summary_csv.is_file():
         with summary_csv.open("w", encoding="utf-8", newline="") as output_file:
             writer = csv.writer(output_file)
@@ -259,14 +265,14 @@ def write_motif_outputs(
     else:
         print(f"Reusing existing {summary_csv}", flush=True)
 
-    profile_csv = motifs_dir / "motif_profiles.csv"
+    profile_csv = tables_dir / "motif_profiles.csv"
     if rewrite or not profile_csv.is_file():
         _write_matrix_csv(profile_csv, motif_names, motif_profiles_filled)
         print(f"Saved {profile_csv}", flush=True)
     else:
         print(f"Reusing existing {profile_csv}", flush=True)
 
-    profiles_path = output_dir / "motif_contributions.p"
+    profiles_path = cache_dir / "motif_contributions.p"
     if rewrite or not profiles_path.is_file():
         se.PickleDump(
             {
@@ -358,8 +364,14 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="MEME-format motif database to score, such as a HOCOMOCO collection.",
     )
-    parser.add_argument("--xp-run", default=DEFAULT_XP_RUN, help="XP run folder (default: xp2_0)")
-    parser.add_argument("--loss", default=DEFAULT_LOSS, help="Fitting loss folder (default: MSE-R)")
+    parser.add_argument(
+        "--xp-run",
+        help="Override the selected fitting run; omit both overrides to use model_selection.json.",
+    )
+    parser.add_argument(
+        "--loss",
+        help="Override the selected fit condition; omit both overrides to use model_selection.json.",
+    )
     parser.add_argument(
         "--random-sequences",
         type=int,
@@ -393,14 +405,14 @@ def main(argv: list[str] | None = None) -> int:
         experiment_dir = (
             args.experiment_root.resolve() / experiment["experiment_name"]
         )
-        fit_folder, _, _, _ = resolve_fit_folder(
+        fit_folder, _, _, config_name = resolve_fit_folder(
             experiment_dir,
             "Dual_Oyster" if experiment["input_signals"] else "Oyster",
             args.xp_run,
             args.loss,
         )
         print(f"Using fitted Oyster model outputs from {fit_folder}.", flush=True)
-        ensemble_dir = fit_folder / "ensemble_interp"
+        ensemble_dir = model_analysis_dir(experiment_dir, config_name)
         manifest = load_ensemble_manifest(ensemble_dir)
         expected_model = "Dual_Oyster" if experiment["input_signals"] else "Oyster"
         if manifest["model_name"] != expected_model:
@@ -408,13 +420,14 @@ def main(argv: list[str] | None = None) -> int:
                 f"Ensemble is for {manifest['model_name']}, but experiment "
                 f"metadata selects {expected_model}."
             )
-        config_model_name = expected_model
-        config_path = experiment_dir / "opt" / config_model_name / "RO_args.p"
-        ro_args = se.PickleLoad(str(config_path))
-        ro_path = Path(ro_args["pn"])
-        if not ro_path.is_absolute():
-            ro_path = experiment_dir / ro_path
-        config = se.PickleLoad(str(ro_path / "best_config.p"))
+        with (ensemble_dir / "model_config.json").open(
+            encoding="utf-8"
+        ) as config_file:
+            config = json.load(config_file)
+        if not isinstance(config, dict):
+            raise ValueError(
+                f"Unexpected model configuration in {ensemble_dir / 'model_config.json'}."
+            )
         pack_path = experiment_dir / "packs" / "tri_tpacks.p"
         if not pack_path.is_file():
             raise FileNotFoundError(f"Experiment sequence packs not found: {pack_path}")
@@ -438,32 +451,80 @@ def main(argv: list[str] | None = None) -> int:
                 f"{sequence_length} vs {seq_pack.shape[2]}."
             )
 
-        output_dir = ensemble_dir / "dna"
-        cache_path = output_dir / "kmer_motif_scores.p"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir = ensemble_dir / "analysis" / "dna"
+        figures_dir = (
+            experiment_dir
+            / "output"
+            / "figures"
+            / "oyster_models"
+            / config_name
+            / "dna"
+        )
+        tables_dir = (
+            experiment_dir
+            / "output"
+            / "tables"
+            / "oyster_models"
+            / config_name
+            / "dna"
+        )
+        cache_path = cache_dir / "kmer_motif_scores.p"
+        cache_dir.mkdir(parents=True, exist_ok=True)
         expected_outputs = [
             cache_path,
-            output_dir / "motif_contributions.p",
-            output_dir / "tables" / "kmer_motif_contributions.csv",
-            output_dir / "tables" / "motif_contributions.csv",
-            output_dir / "tables" / "motif_profiles.csv",
-            output_dir / "figs" / "most_contributive_hist.png",
-            output_dir / "figs" / "top_motif_contributions.png",
+            cache_dir / "motif_contributions.p",
+            tables_dir / "kmer_motif_contributions.csv",
+            tables_dir / "motif_contributions.csv",
+            tables_dir / "motif_profiles.csv",
+            figures_dir / "most_contributive_hist.png",
+            figures_dir / "top_motif_contributions.png",
         ]
+        checkpoint_signatures = []
+        for model_path in manifest["model_paths"]:
+            checkpoint = Path(f"{model_path}.pt")
+            stat = checkpoint.stat()
+            checkpoint_signatures.append(
+                {
+                    "path": str(checkpoint),
+                    "size": stat.st_size,
+                    "modified_ns": stat.st_mtime_ns,
+                }
+            )
+        motif_stat = args.motif_file.stat()
+        cache_signature = {
+            "model_name": manifest["model_name"],
+            "optimizer_config": manifest["optimizer_config"],
+            "model_checkpoints": checkpoint_signatures,
+            "weights": manifest["weights"],
+            "motif_file": str(args.motif_file.resolve()),
+            "motif_size": motif_stat.st_size,
+            "motif_modified_ns": motif_stat.st_mtime_ns,
+            "random_sequences": args.random_sequences,
+            "batch_size": args.batch_size,
+            "top": args.top,
+        }
+        cached_scores = None
+        if cache_path.is_file() and not args.rewrite:
+            cached = se.PickleLoad(str(cache_path))
+            if (
+                isinstance(cached, dict)
+                and cached.get("cache_signature") == cache_signature
+            ):
+                cached_scores = cached
         if (
             not args.rewrite
+            and cached_scores is not None
             and all(path.is_file() for path in expected_outputs)
         ):
-            scored = se.PickleLoad(str(cache_path))
             se.PickleLoad(str(output_dir / "motif_contributions.p"))
             print(
                 f"All DNA interpretation outputs already exist; loaded cached "
-                f"results from {output_dir}. Use --rewrite to regenerate them.",
+                f"results from {cache_dir}. Use --rewrite to regenerate them.",
                 flush=True,
             )
         else:
-            if cache_path.is_file() and not args.rewrite:
-                scored = se.PickleLoad(str(cache_path))
+            if cached_scores is not None:
+                scored = cached_scores
                 print(f"Loaded cached motif scores from {cache_path}.", flush=True)
             else:
                 print(
@@ -481,22 +542,26 @@ def main(argv: list[str] | None = None) -> int:
                     args.random_sequences,
                     args.batch_size,
                 )
+                scored["cache_signature"] = cache_signature
                 se.PickleDump(scored, str(cache_path))
                 print(f"Saved motif score cache to {cache_path}.", flush=True)
             print("Writing missing or rewritten motif summaries and figures.", flush=True)
             outputs = write_motif_outputs(
                 scored,
                 config,
-                output_dir,
+                cache_dir,
+                figures_dir,
+                tables_dir,
                 args.top,
-                rewrite=args.rewrite,
+                rewrite=args.rewrite or cached_scores is None,
             )
             print(
-                f"DNA interpretation outputs are ready in {output_dir}.",
+                f"DNA interpretation figures and tables are ready under "
+                f"{experiment_dir / 'output'}.",
                 flush=True,
             )
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
-        print(f"interp_dna: error: {error}", file=sys.stderr)
+        print(f"dna_analysis: error: {error}", file=sys.stderr)
         return 1
     return 0
 

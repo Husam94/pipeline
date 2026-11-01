@@ -1,0 +1,28 @@
+{
+  "experiment_name": "EnhAct",
+  "genome": "hg38",
+  "input_accessions": [],
+  "output_accessions": [
+    "ENCFF208RCC",
+    "ENCFF381OCU",
+    "ENCFF844UAO"
+  ],
+  "control_accessions": [
+    "ENCFF095XDF",
+    "ENCFF865ZTN",
+    "ENCFF335EBD"
+  ],
+  "output_size": 50,
+  "seq_size": 1000,
+  "translate_bp": 250,
+  "num_trans_wins": 5,
+  "unique_sites": 30000,
+  "target_percentile": 1,
+  "control_percentile": 5,
+  "input_signals": [],
+  "output_signal": "ADZRBP",
+  "input_size": null,
+  "models_to_search": [
+    "Oyster"
+  ]
+}

@@ -427,6 +427,12 @@ def _metadata_row(
     if not isinstance(controls, list):
         controls = [controls]
     species, cell, condition = _sample_metadata(file_data, dataset_data)
+    assay = _display(
+        dataset_data.get("assay_title") or dataset_data.get("assay_term_name")
+    )
+    target = _resolve_label(dataset_data.get("target"), ("label", "title"))
+    if not target and not dataset_data.get("control_type"):
+        target = assay
 
     return {
         "File name": accession,
@@ -438,10 +444,8 @@ def _metadata_row(
         "Mapped read length": _display(file_data.get("mapped_read_length")),
         "Assembly": _display(file_data.get("assembly")),
         "Date added": _display(file_data.get("date_created")),
-        "Assay": _display(
-            dataset_data.get("assay_title") or dataset_data.get("assay_term_name")
-        ),
-        "Target": _resolve_label(dataset_data.get("target"), ("label", "title")),
+        "Assay": assay,
+        "Target": target,
         "Species": species,
         "Cell": cell,
         "Condition": condition,
@@ -486,7 +490,16 @@ def ensure_metadata_columns(metadata_path: Path) -> None:
     updated_fieldnames = list(METADATA_COLUMNS) + [
         name for name in fieldnames if name not in METADATA_COLUMNS
     ]
-    if updated_fieldnames == fieldnames:
+    target_backfilled = False
+    for row in rows:
+        if (
+            not (row.get("Target") or "").strip()
+            and (row.get("Controls") or "").strip()
+            and (row.get("Assay") or "").strip()
+        ):
+            row["Target"] = row["Assay"]
+            target_backfilled = True
+    if updated_fieldnames == fieldnames and not target_backfilled:
         return
 
     temporary_path: Path | None = None
@@ -690,7 +703,7 @@ def main(argv: list[str] | None = None) -> int:
             f"or digits): {', '.join(invalid)}"
         )
 
-    project_root = Path(__file__).resolve().parents[1]
+    project_root = Path(__file__).resolve().parents[2]
     encode_dir = project_root / "data" / "ENCODE"
     raw_dir = encode_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,12 @@
 # Local datasets and generated experiment outputs
-/data/
+/data/*
+!/data/experiments/
+/data/experiments/*
+!/data/experiments/*/
+/data/experiments/*/*
+!/data/experiments/*/output/
+/data/experiments/*/output/*
+!/data/experiments/*/output/**
 
 # Python bytecode
 __pycache__/

@@ -7,10 +7,15 @@ import multiprocessing
 #------------------------------------
 import poseigen_seaside.basics as se
 import poseigen_trident.utils as tu
-import poseigen_trident.preass as preass
 import poseigen_trident.othermodels as othmods
 import poseigen_trident.deepstarr as deepstarr
 import poseigen_oyster.model as oyster_models
+from poseigen_mimic import (
+    Dual_Mimic,
+    Mimic,
+    Reset_Dual_Mimic,
+    Reset_Mimic,
+)
 #------------------------------------
 import bio_xps_functions as xpfus
 #------------------------------------
@@ -32,10 +37,10 @@ def resolve_data_path():
 DATA_PATH = resolve_data_path()
 os.chdir(DATA_PATH)
 
-optfolder = se.NewFolder('opt')
+searchfolder = se.NewFolder('search')
 xpsfolder = se.NewFolder('xps')
 
-fit_args = se.PickleLoad(optfolder + 'fit_args')
+fit_args = se.PickleLoad(searchfolder + 'fit_args')
 modx_configs = se.PickleLoad(xpsfolder + 'modx_configs')
 
 xpx_dict = se.PickleLoad(xpsfolder + 'xp3_dict')
@@ -58,7 +63,7 @@ def run_job(args):
     modx_name, modx_name_full, com = args
     cof = modx_configs[modx_name]
 
-    argoz = se.PickleLoad(f'{optfolder}{modx_name}/RO_args')
+    argoz = se.PickleLoad(f'{searchfolder}{modx_name}/RO_args')
     RO_folo = argoz['pn']
     best_config_idx = se.PickleLoad(RO_folo + 'best_config_idx')
 
@@ -77,20 +82,20 @@ def run_job(args):
     #------------------------------------------
 
     if modx_name == 'Dual_Oyster':
-        modo = oyster_models.DualOyster
-        mim = [oyster_models.Reset_DualOyster, {}]
+        modo = oyster_models.Dual_Oyster
+        mim = [oyster_models.Reset_Dual_Oyster, {}]
     
-    elif modx_name == 'Dual_Ultra':
-        modo = preass.Dual_Ultra
-        mim = [preass.Reset_Dual_Ultra, {}]
+    elif modx_name.startswith('Dual_Mimic'):
+        modo = Dual_Mimic
+        mim = [Reset_Dual_Mimic, {}]
     
     elif modx_name == 'Oyster':
         modo = oyster_models.Oyster
         mim = [oyster_models.Reset_Oyster, {}]
     
-    elif modx_name == 'Ultra':
-        modo = preass.Ultra
-        mim = [preass.Reset_Ultra, {}]
+    elif modx_name.startswith('Mimic'):
+        modo = Mimic
+        mim = [Reset_Mimic, {}]
     
     elif modx_name == 'DeepSTARR': 
         modo = deepstarr.DeepSTARR
@@ -158,7 +163,12 @@ if __name__ == "__main__":
     
     #-----------------------------------------------
     
-    results_folder = se.NewFolder(xpsfolder + 'results')
+    figures_folder = se.NewFolder(
+        os.path.join(DATA_PATH, 'output', 'figures', 'model_fitting')
+    )
+    tables_folder = se.NewFolder(
+        os.path.join(DATA_PATH, 'output', 'tables', 'model_fitting')
+    )
 
     styled_scores, results_scores, df_stats = xpfus.ResultsBasic(
         xpx_dict,
@@ -169,10 +179,12 @@ if __name__ == "__main__":
         metric="rmses",
         ref_idx=0,
         rewrite=True,
+        styled_output_base=figures_folder + 'xp3_rmses_results_scores',
+        table_output_base=tables_folder + 'xp3_rmses_results_scores',
     )
 
-    results_scores.to_excel(results_folder + 'xp3_' + 'rmses_results_scores.xlsx')
-    df_stats.to_excel(results_folder + 'xp3_' + 'rmses_df_stats.xlsx')
+    results_scores.to_excel(tables_folder + 'xp3_' + 'rmses_results_scores.xlsx')
+    df_stats.to_excel(tables_folder + 'xp3_' + 'rmses_df_stats.xlsx')
 
     styled_scores, results_scores, df_stats = xpfus.ResultsBasic(
         xpx_dict,
@@ -183,8 +195,10 @@ if __name__ == "__main__":
         ref_idx=0,
         rewrite=False,
         metric="epochs",
+        styled_output_base=figures_folder + 'xp3_epochs_results_scores',
+        table_output_base=tables_folder + 'xp3_epochs_results_scores',
     )
 
-    results_scores.to_excel(results_folder + 'xp3_' + 'epochs_results_scores.xlsx')
-    df_stats.to_excel(results_folder + 'xp3_' + 'epochs_df_stats.xlsx')
+    results_scores.to_excel(tables_folder + 'xp3_' + 'epochs_results_scores.xlsx')
+    df_stats.to_excel(tables_folder + 'xp3_' + 'epochs_df_stats.xlsx')
     
