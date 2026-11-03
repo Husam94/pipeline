@@ -1,0 +1,26 @@
+{
+  "batchsize": 512,
+  "learningrate": 0.0028593275113289428,
+  "dim_i": [
+    1,
+    1000,
+    4
+  ],
+  "dim_f": [
+    1,
+    1,
+    1
+  ],
+  "kE_k": 15,
+  "kE_cf_m": 150,
+  "kE_cf_ns": 1.3,
+  "kE_ck_base": 7,
+  "kE_OneByOne": false,
+  "kE_ck_grouped": false,
+  "kE_chunked": 4,
+  "P_ck": 200,
+  "O_dropout": 0,
+  "activations": "torch.nn.modules.activation.LeakyReLU",
+  "activation_f": "poseigen_trident.utils.AsinhAct_L",
+  "batchnorm": null
+}

@@ -1,0 +1,45 @@
+{
+  "experiment_name": "EnhAct",
+  "model_name": "Oyster",
+  "optimizer_config": "Oyster_0_275",
+  "optimizer_best_config_index": 275,
+  "model_config_file": "model_config.json",
+  "xp_run": "xp2_0",
+  "loss": "loss=MSE-R",
+  "fit_condition": "MSE-R",
+  "source_fit_folder": "xps/xp2_0/Oyster_0_275/MSE-R",
+  "source_fit_folder_relative": "xps/xp2_0/Oyster_0_275/MSE-R",
+  "selection_reason": "mse_r_default",
+  "repeats": 15,
+  "bootstrap": 500,
+  "top": 3,
+  "minimum_weight": 0.05,
+  "repeat_indices": [
+    0,
+    1,
+    2,
+    7,
+    13
+  ],
+  "weights": [
+    0.33980582524271846,
+    0.10748959778085992,
+    0.19486823855755894,
+    0.29472954230235787,
+    0.06310679611650485
+  ],
+  "source_model_paths_relative": [
+    "xps/xp2_0/Oyster_0_275/MSE-R/0_0_Mod.pt",
+    "xps/xp2_0/Oyster_0_275/MSE-R/0_1_Mod.pt",
+    "xps/xp2_0/Oyster_0_275/MSE-R/0_2_Mod.pt",
+    "xps/xp2_0/Oyster_0_275/MSE-R/0_7_Mod.pt",
+    "xps/xp2_0/Oyster_0_275/MSE-R/0_13_Mod.pt"
+  ],
+  "model_paths": [
+    "models/repeat_0_Mod",
+    "models/repeat_1_Mod",
+    "models/repeat_2_Mod",
+    "models/repeat_7_Mod",
+    "models/repeat_13_Mod"
+  ]
+}

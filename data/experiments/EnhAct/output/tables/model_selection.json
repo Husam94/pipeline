@@ -1,0 +1,390 @@
+{
+  "schema_version": 1,
+  "experiment_name": "EnhAct",
+  "model_name": "Oyster",
+  "selected_at_utc": "2026-11-03T01:36:15+00:00",
+  "method": {
+    "metric": "reciprocal-bin-weighted RMSE",
+    "evaluation_split_index": 2,
+    "bootstrap_unit": "model repeats, using the existing XP scoring method",
+    "rmse_interval_percentiles": [
+      5,
+      95
+    ],
+    "interval_confidence_percent": 90,
+    "selection_rule": "Keep MSE-R unless an alternative's existing repeat-bootstrap relative RMSE interval is entirely below zero; among qualifying alternatives, choose the lowest median RMSE."
+  },
+  "baseline": {
+    "xp_run": "xp2_0",
+    "xp_key": "xp2",
+    "condition": "MSE-R",
+    "condition_name": "MSE-R",
+    "condition_label": "loss=MSE-R",
+    "model_config": "Oyster_0_275",
+    "fit_folder": "xps/xp2_0/Oyster_0_275/MSE-R",
+    "median_rmse": 0.19029387369855713,
+    "mean_rmse": 0.1911345272071907,
+    "low_rmse": 0.18681002591849497,
+    "high_rmse": 0.19897525548681805,
+    "is_baseline_alias": false
+  },
+  "selected": {
+    "xp_run": "xp2_0",
+    "xp_key": "xp2",
+    "condition": "MSE-R",
+    "condition_name": "MSE-R",
+    "condition_label": "loss=MSE-R",
+    "model_config": "Oyster_0_275",
+    "fit_folder": "xps/xp2_0/Oyster_0_275/MSE-R",
+    "median_rmse": 0.19029387369855713,
+    "mean_rmse": 0.1911345272071907,
+    "low_rmse": 0.18681002591849497,
+    "high_rmse": 0.19897525548681805,
+    "is_baseline_alias": false
+  },
+  "candidates": [
+    {
+      "xp_run": "xp2_0",
+      "xp_key": "xp2",
+      "condition": "MSE",
+      "condition_name": "MSE",
+      "condition_label": "loss=MSE",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp2_0/Oyster_0_275/MSE",
+      "median_rmse": 0.27080884660223464,
+      "mean_rmse": 0.27027154805857206,
+      "low_rmse": 0.26551720891243524,
+      "high_rmse": 0.2742464037917176,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 41.738412096433855,
+        "low_percent": 35.616335239298365,
+        "high_percent": 45.80425699199666,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp2_0",
+      "xp_key": "xp2",
+      "condition": "MSE-C",
+      "condition_name": "MSE-C",
+      "condition_label": "loss=MSE-C",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp2_0/Oyster_0_275/MSE-C",
+      "median_rmse": 0.2652624620148858,
+      "mean_rmse": 0.2655109230419778,
+      "low_rmse": 0.26168935423238576,
+      "high_rmse": 0.2690851619378263,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 39.33303255325025,
+        "low_percent": 32.86194560300038,
+        "high_percent": 43.41105115416419,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp2_0",
+      "xp_key": "xp2",
+      "condition": "MSE-R",
+      "condition_name": "MSE-R",
+      "condition_label": "loss=MSE-R",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp2_0/Oyster_0_275/MSE-R",
+      "median_rmse": 0.19029387369855713,
+      "mean_rmse": 0.1911345272071907,
+      "low_rmse": 0.18681002591849497,
+      "high_rmse": 0.19897525548681805,
+      "is_baseline_alias": false
+    },
+    {
+      "xp_run": "xp3_0",
+      "xp_key": "xp3",
+      "condition": 1.0,
+      "condition_name": "1.0",
+      "condition_label": "without_replacement=1.0",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3_0/Oyster_0_275/1.0",
+      "median_rmse": 0.19029387369855713,
+      "mean_rmse": 0.19090174110367233,
+      "low_rmse": 0.18730512755316966,
+      "high_rmse": 0.19897525548681805,
+      "is_baseline_alias": true
+    },
+    {
+      "xp_run": "xp3_0",
+      "xp_key": "xp3",
+      "condition": 0.8,
+      "condition_name": "0.8",
+      "condition_label": "without_replacement=0.8",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3_0/Oyster_0_275/0.8",
+      "median_rmse": 0.1979421124681331,
+      "mean_rmse": 0.19809346361185917,
+      "low_rmse": 0.19121602991685724,
+      "high_rmse": 0.20644347175691385,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 3.386765410795345,
+        "low_percent": -1.6614389213826852,
+        "high_percent": 9.739968542460398,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3_0",
+      "xp_key": "xp3",
+      "condition": 0.6,
+      "condition_name": "0.6",
+      "condition_label": "without_replacement=0.6",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3_0/Oyster_0_275/0.6",
+      "median_rmse": 0.193455173137393,
+      "mean_rmse": 0.19340192771310988,
+      "low_rmse": 0.18961573880568103,
+      "high_rmse": 0.1995872191110901,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 1.3385319338677926,
+        "low_percent": -3.3507569770944823,
+        "high_percent": 4.883680820568337,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3_0",
+      "xp_key": "xp3",
+      "condition": 0.4,
+      "condition_name": "0.4",
+      "condition_label": "without_replacement=0.4",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3_0/Oyster_0_275/0.4",
+      "median_rmse": 0.19420357474597907,
+      "mean_rmse": 0.19454356075995108,
+      "low_rmse": 0.1905186296936722,
+      "high_rmse": 0.20004837990556742,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 1.9423100536812177,
+        "low_percent": -3.0445050476413993,
+        "high_percent": 5.782089312212513,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3_0",
+      "xp_key": "xp3",
+      "condition": 0.2,
+      "condition_name": "0.2",
+      "condition_label": "without_replacement=0.2",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3_0/Oyster_0_275/0.2",
+      "median_rmse": 0.19197384803880585,
+      "mean_rmse": 0.19205560512960196,
+      "low_rmse": 0.19019002522668665,
+      "high_rmse": 0.19554617083407252,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 0.7347569908136453,
+        "low_percent": -3.7802523189155113,
+        "high_percent": 3.392288751621231,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3_0",
+      "xp_key": "xp3",
+      "condition": 0.1,
+      "condition_name": "0.1",
+      "condition_label": "without_replacement=0.1",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3_0/Oyster_0_275/0.1",
+      "median_rmse": 0.19376802686427846,
+      "mean_rmse": 0.194597524813256,
+      "low_rmse": 0.19253362532306464,
+      "high_rmse": 0.19743884588594596,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 2.1691588938146156,
+        "low_percent": -2.6318244562797855,
+        "high_percent": 4.939335949029466,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3_0",
+      "xp_key": "xp3",
+      "condition": 0.05,
+      "condition_name": "0.05",
+      "condition_label": "without_replacement=0.05",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3_0/Oyster_0_275/0.05",
+      "median_rmse": 0.19469600192791786,
+      "mean_rmse": 0.19545146987946174,
+      "low_rmse": 0.1936742909031332,
+      "high_rmse": 0.19850399946629457,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 2.5635681460549287,
+        "low_percent": -2.2693058523559295,
+        "high_percent": 5.347092010908483,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3B_0",
+      "xp_key": "xp3B",
+      "condition": 5,
+      "condition_name": "5",
+      "condition_label": "with_replacement=5",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3B_0/Oyster_0_275/5",
+      "median_rmse": 0.1889611338089194,
+      "mean_rmse": 0.18958714862308418,
+      "low_rmse": 0.18666042744103012,
+      "high_rmse": 0.19270116240245144,
+      "is_baseline_alias": true
+    },
+    {
+      "xp_run": "xp3B_0",
+      "xp_key": "xp3B",
+      "condition": 1.0,
+      "condition_name": "1.0",
+      "condition_label": "with_replacement=1.0",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3B_0/Oyster_0_275/1.0",
+      "median_rmse": 0.20975062448089024,
+      "mean_rmse": 0.21026819449147346,
+      "low_rmse": 0.20165908144437725,
+      "high_rmse": 0.21696358982810907,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 10.44406462223446,
+        "low_percent": 4.626610838967816,
+        "high_percent": 14.924457812332603,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3B_0",
+      "xp_key": "xp3B",
+      "condition": 0.8,
+      "condition_name": "0.8",
+      "condition_label": "with_replacement=0.8",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3B_0/Oyster_0_275/0.8",
+      "median_rmse": 0.22035687532505085,
+      "mean_rmse": 0.22134463337457294,
+      "low_rmse": 0.21665917765582693,
+      "high_rmse": 0.22961514476379094,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 15.720590537602197,
+        "low_percent": 10.516222580293878,
+        "high_percent": 21.38452308944794,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3B_0",
+      "xp_key": "xp3B",
+      "condition": 0.6,
+      "condition_name": "0.6",
+      "condition_label": "with_replacement=0.6",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3B_0/Oyster_0_275/0.6",
+      "median_rmse": 0.21923499546684988,
+      "mean_rmse": 0.2206398356146495,
+      "low_rmse": 0.21280830818965316,
+      "high_rmse": 0.23418973071719923,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 14.844587983326306,
+        "low_percent": 9.165691155524724,
+        "high_percent": 23.00984356782068,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3B_0",
+      "xp_key": "xp3B",
+      "condition": 0.4,
+      "condition_name": "0.4",
+      "condition_label": "with_replacement=0.4",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3B_0/Oyster_0_275/0.4",
+      "median_rmse": 0.2164844378839362,
+      "mean_rmse": 0.21856099655685196,
+      "low_rmse": 0.20991471220163907,
+      "high_rmse": 0.2305037908114157,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 13.880189449685298,
+        "low_percent": 8.411621224772414,
+        "high_percent": 22.062722194614803,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3B_0",
+      "xp_key": "xp3B",
+      "condition": 0.2,
+      "condition_name": "0.2",
+      "condition_label": "with_replacement=0.2",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3B_0/Oyster_0_275/0.2",
+      "median_rmse": 0.22260719728906486,
+      "mean_rmse": 0.22280206420562318,
+      "low_rmse": 0.2163799191460601,
+      "high_rmse": 0.23187338040577807,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 16.78183807827265,
+        "low_percent": 11.071073811097065,
+        "high_percent": 21.683125302325834,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3B_0",
+      "xp_key": "xp3B",
+      "condition": 0.1,
+      "condition_name": "0.1",
+      "condition_label": "with_replacement=0.1",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3B_0/Oyster_0_275/0.1",
+      "median_rmse": 0.2218774065523763,
+      "mean_rmse": 0.22411371245190143,
+      "low_rmse": 0.21458441963281993,
+      "high_rmse": 0.23602008945097105,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 17.015198153839982,
+        "low_percent": 10.728560401658616,
+        "high_percent": 25.210820918872656,
+        "statistically_better": false
+      }
+    },
+    {
+      "xp_run": "xp3B_0",
+      "xp_key": "xp3B",
+      "condition": 0.05,
+      "condition_name": "0.05",
+      "condition_label": "with_replacement=0.05",
+      "model_config": "Oyster_0_275",
+      "fit_folder": "xps/xp3B_0/Oyster_0_275/0.05",
+      "median_rmse": 0.2380659608079807,
+      "mean_rmse": 0.23765049706634986,
+      "low_rmse": 0.2325290107082227,
+      "high_rmse": 0.24200268632162664,
+      "is_baseline_alias": false,
+      "comparison_to_mse_r": {
+        "median_percent": 24.535851032278643,
+        "low_percent": 18.890618246977308,
+        "high_percent": 29.0572426066976,
+        "statistically_better": false
+      }
+    }
+  ],
+  "selection_reason": "mse_r_default"
+}

@@ -177,11 +177,17 @@ def make_weighted_ensemble(
     if not metrics_path.is_file():
         raise FileNotFoundError(f"Model repeat metrics not found: {metrics_path}")
     metrics = se.PickleLoad(str(metrics_path))
-    if not isinstance(metrics, (list, tuple)) or not metrics or not isinstance(
-        metrics[0], dict
-    ):
+    if not isinstance(metrics, (dict, list, tuple)):
         raise ValueError(f"Unexpected metrics format in {metrics_path}.")
-    if any(index not in metrics[0] for index in range(repeats)):
+    try:
+        repeat_metrics = metrics[0]
+    except (IndexError, KeyError) as error:
+        raise ValueError(
+            f"Repeat metrics are missing from {metrics_path}."
+        ) from error
+    if not isinstance(repeat_metrics, dict):
+        raise ValueError(f"Unexpected metrics format in {metrics_path}.")
+    if any(index not in repeat_metrics for index in range(repeats)):
         raise ValueError(
             f"{metrics_path} does not contain scores for all {repeats} repeats."
         )

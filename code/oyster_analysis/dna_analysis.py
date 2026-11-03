@@ -185,7 +185,7 @@ def _score_motifs(
 
 def _summarize_motifs(
     scored: dict[str, Any], config: dict[str, Any]
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[list[np.ndarray], np.ndarray]:
     scores = np.asarray(scored["kmer_scores"])
     if scores.ndim != 2:
         raise ValueError(f"Expected 2D motif scores, found shape {scores.shape}.")
@@ -216,7 +216,7 @@ def _summarize_motifs(
         fill_center=False,
     )
     motif_names = scored["summary_motif_names"]
-    return np.asarray(motif_profiles), np.asarray(motif_profiles_filled)
+    return motif_profiles, np.asarray(motif_profiles_filled)
 
 
 def write_motif_outputs(
